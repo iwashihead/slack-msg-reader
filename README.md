@@ -163,6 +163,11 @@ Artifacts として生成されます。バージョンタグ（`v*`）をpush�
 Actionsの実行結果ページの「Artifacts」欄からダウンロードできます（GitHubの仕様上、
 Artifactsは既定で90日間保持されます）。
 
+パッケージ版（.app / .exe）実行時のデータ（SQLite DB等）は `~/.slack-msg-reader/data/` に
+保存されます（ソースから `slack` CLIで動かす場合は従来通り `data/` プロジェクト直下）。
+パッケージ版はアプリバンドル自身の場所に書き込もうとすると、マウントした `.dmg` から
+直接起動した場合や権限次第で失敗するため、ホームディレクトリ配下に固定しています。
+
 ## セキュリティ
 
 依存パッケージは [pip-audit](https://github.com/pypa/pip-audit) で監査しています（PyPI Advisory DB / OSV の
