@@ -2,12 +2,18 @@ name: Build distributable artifacts
 
 # Manual by default -- these are full application builds (PyInstaller +
 # installer packaging) on both OSes, not something needed on every push.
-# Also runs on version tags so cutting a release always produces artifacts.
+# Also runs on version tags so cutting a release always produces artifacts,
+# and on PRs that touch the packaging itself so a broken build/installer
+# script gets caught before merge instead of at release time.
 on:
   workflow_dispatch:
   push:
     tags:
       - "v*"
+  pull_request:
+    paths:
+      - "packaging/**"
+      - ".github/workflows/build-artifacts.yml"
 
 jobs:
   build-macos:
