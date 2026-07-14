@@ -1,0 +1,35 @@
+name: Security audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, independent of code changes -- new CVEs get disclosed against
+    # already-pinned dependencies all the time.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Cross-check against both advisory sources rather than trusting one.
+        service: [pypi, osv]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project (every extra that ships, incl. GUI/build tooling)
+        run: |
+          pip install --upgrade pip
+          pip install -e ".[build]"
+          pip install pip-audit
+
+      - name: Run pip-audit (${{ matrix.service }})
+        run: pip-audit --local --desc -s ${{ matrix.service }}
