@@ -96,6 +96,38 @@ slack export --max-chars 100000 --max-files 5         # 分割の閾値を調整
 そのチャンネル内でメッセージ単位に分割し、続きのファイルにも同じ見出しを
 `(continued)` 付きで繰り返します。
 
+### 6. GUIアプリ
+
+CLIの代わりにデスクトップGUI（PySide6/Qt製、Mac/Windows両対応）からも操作できます。
+「Chrome & Collect」「Export」「Analyze」の3タブで、これまでのCLIコマンドと同じ機能を
+すべてカバーしています。Playwright/CDPを使う処理（Chrome起動・Inspect・Collect）は
+バックグラウンドスレッドで実行され、ログはGUI内にリアルタイム表示されます。
+
+```bash
+pip install -e ".[gui]"
+slack-gui
+# もしくは
+python -m slack_msg_reader.gui.app
+```
+
+#### 配布用アプリ（.app / .exe）のビルド
+
+```bash
+pip install -e ".[build]"
+pyinstaller packaging/SlackMsgReader.spec --distpath packaging/dist --workpath packaging/build
+```
+
+- **Mac**: `packaging/dist/SlackMsgReader.app` が生成されます。このリポジトリのMac環境で
+  実際にビルドし、Chrome起動・Inspect・Collect・Export・Analyzeの全機能が実データに対して
+  動作することを確認済みです。
+- **Windows**: 同じ `.spec` ファイルでビルドできますが（`BUNDLE`はmacOS専用ステップのため
+  Windows実行時は自動的にスキップされます）、Windows環境が手元にないためこのセッションでは
+  実際の `.exe` ビルド・動作検証はできていません。Windows機で上記コマンドを実行し、
+  `packaging/dist/SlackMsgReader/SlackMsgReader.exe` が生成されるか確認してください。
+  Chrome検出は `scraper/chrome_launcher.py` の `find_chrome_executable()` で
+  `C:\Program Files\Google\Chrome\Application\chrome.exe` 等の標準パスをチェックしますが、
+  実機での動作確認は別途必要です。
+
 ## 既知の制約 (MVP)
 
 - スレッド返信の本文までは取得しません（親メッセージの `reply_count` のみ）。
@@ -127,4 +159,16 @@ src/slack_msg_reader/
   analysis/
     queries.py            分析用クエリ (pandas DataFrame)
     cli.py                  分析用CLI
+  gui/
+    app.py                  GUIエントリポイント (`slack-gui`)
+    main_window.py         3タブ構成のメインウィンドウ
+    chrome_tab.py           Chrome起動・Inspect・Collectタブ
+    export_tab.py           Exportタブ
+    analyze_tab.py          Analyzeタブ
+    workers.py              Playwright呼び出し等をバックグラウンドスレッド化
+    log_handler.py          logging→GUIログ表示のブリッジ
+    models.py               QTableView用のpandas DataFrameモデル
+packaging/
+  run_gui.py              PyInstaller用エントリポイントスクリプト
+  SlackMsgReader.spec     PyInstallerビルド設定
 ```
