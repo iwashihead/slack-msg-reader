@@ -128,6 +128,24 @@ pyinstaller packaging/SlackMsgReader.spec --distpath packaging/dist --workpath p
   `C:\Program Files\Google\Chrome\Application\chrome.exe` 等の標準パスをチェックしますが、
   実機での動作確認は別途必要です。
 
+## セキュリティ
+
+依存パッケージは [pip-audit](https://github.com/pypa/pip-audit) で監査しています（PyPI Advisory DB / OSV の
+両方に対してクロスチェック）。`.github/workflows/security.yml` により、`main` へのpush・PR・
+毎週月曜（新規CVEはコード変更なしでも発生するため）に自動実行されます。
+
+手元で同じ監査を再現する場合:
+
+```bash
+pip install -e ".[build]"   # 実際に配布される依存関係一式（core + gui + build extras）
+pip install pip-audit
+pip-audit --local --desc -s pypi
+pip-audit --local --desc -s osv
+```
+
+依存関係の宣言は `pyproject.toml` のみを正としています（過去にあった `requirements.txt` は
+内容が古くなっていた＝GUI/ビルド用の依存が漏れていたため削除しました）。
+
 ## 既知の制約 (MVP)
 
 - スレッド返信の本文までは取得しません（親メッセージの `reply_count` のみ）。
@@ -171,4 +189,6 @@ src/slack_msg_reader/
 packaging/
   run_gui.py              PyInstaller用エントリポイントスクリプト
   SlackMsgReader.spec     PyInstallerビルド設定
+.github/workflows/
+  security.yml            pip-auditによる依存パッケージ脆弱性チェック (push/PR/週次)
 ```
