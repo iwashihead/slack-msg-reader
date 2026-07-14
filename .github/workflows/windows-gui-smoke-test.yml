@@ -1,0 +1,70 @@
+name: Windows GUI smoke test
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/slack_msg_reader/gui/**"
+      - "src/slack_msg_reader/scraper/chrome_launcher.py"
+      - "packaging/**"
+      - ".github/workflows/windows-gui-smoke-test.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/slack_msg_reader/gui/**"
+      - "src/slack_msg_reader/scraper/chrome_launcher.py"
+      - "packaging/**"
+
+jobs:
+  windows-smoke-test:
+    # Real Windows, not an emulation -- this is the actual verification for
+    # the "does this work on Windows too" question, since none of this
+    # project's development happens on a Windows machine.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project (gui + build extras)
+        run: pip install -e ".[build]"
+
+      - name: Verify Chrome is discoverable on this Windows install
+        run: |
+          python -c "from slack_msg_reader.scraper.chrome_launcher import find_chrome_executable; p = find_chrome_executable(); print('Chrome path:', p); import sys; sys.exit(0 if p else 1)"
+
+      - name: Render the real GUI window and save a screenshot
+        run: python packaging/gui_smoke_test.py --out gui_windows_screenshot.png
+
+      - name: Launch the dedicated Chrome and verify CDP comes up
+        run: |
+          python -c "from slack_msg_reader.scraper import chrome_launcher; ready = chrome_launcher.launch(timeout_seconds=30); print('CDP ready:', ready); import sys; sys.exit(0 if ready else 1)"
+
+      - name: Stop the dedicated Chrome
+        if: always()
+        run: taskkill /IM chrome.exe /F
+        shell: cmd
+        continue-on-error: true
+
+      - name: Build the Windows executable with PyInstaller
+        run: pyinstaller packaging/SlackMsgReader.spec --distpath packaging/dist --workpath packaging/build --noconfirm
+
+      - name: Launch the built .exe and verify it stays alive
+        shell: pwsh
+        run: |
+          $proc = Start-Process -FilePath "packaging/dist/SlackMsgReader/SlackMsgReader.exe" -PassThru
+          Start-Sleep -Seconds 8
+          if ($proc.HasExited) {
+            Write-Error "SlackMsgReader.exe exited early (exit code $($proc.ExitCode))"
+            exit 1
+          }
+          Write-Host "SlackMsgReader.exe launched and is still running after 8s."
+          Stop-Process -Id $proc.Id -Force
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-gui-screenshot
+          path: gui_windows_screenshot.png
