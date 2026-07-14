@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "slack-msg-reader"
+version = "0.1.0"
+description = "Collect Slack messages visible to your own account (no bot/API app) via an already-authenticated browser session, store them in SQLite, and analyze them."
+requires-python = ">=3.10"
+dependencies = [
+    "playwright>=1.45",
+    "sqlalchemy>=2.0",
+    "click>=8.1",
+    "python-dateutil>=2.9",
+]
+
+[project.optional-dependencies]
+analysis = [
+    "pandas>=2.2",
+]
+
+[project.scripts]
+slack-collect = "slack_msg_reader.collect:cli"
+slack-analyze = "slack_msg_reader.analysis.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
