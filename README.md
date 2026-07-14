@@ -117,16 +117,25 @@ pip install -e ".[build]"
 pyinstaller packaging/SlackMsgReader.spec --distpath packaging/dist --workpath packaging/build
 ```
 
-- **Mac**: `packaging/dist/SlackMsgReader.app` が生成されます。このリポジトリのMac環境で
-  実際にビルドし、Chrome起動・Inspect・Collect・Export・Analyzeの全機能が実データに対して
-  動作することを確認済みです。
-- **Windows**: 同じ `.spec` ファイルでビルドできますが（`BUNDLE`はmacOS専用ステップのため
-  Windows実行時は自動的にスキップされます）、Windows環境が手元にないためこのセッションでは
-  実際の `.exe` ビルド・動作検証はできていません。Windows機で上記コマンドを実行し、
-  `packaging/dist/SlackMsgReader/SlackMsgReader.exe` が生成されるか確認してください。
-  Chrome検出は `scraper/chrome_launcher.py` の `find_chrome_executable()` で
-  `C:\Program Files\Google\Chrome\Application\chrome.exe` 等の標準パスをチェックしますが、
-  実機での動作確認は別途必要です。
+- **Mac**: `packaging/dist/SlackMsgReader.app` が生成されます。実際にビルドし、
+  Chrome起動・Inspect・Collect・Export・Analyzeの全機能が実データに対して動作することを
+  確認済みです。
+- **Windows**: 同じ `.spec` ファイルでビルドできます（`BUNDLE`はmacOS専用ステップのため
+  Windows実行時は自動的にスキップされます）。`.github/workflows/windows-gui-smoke-test.yml`
+  により、GitHub Actionsの `windows-latest`（実機のWindows環境）上でビルド・起動・
+  Chrome連携までを継続的に検証しています。
+
+#### CIでのビルド済み配布物のダウンロード
+
+GitHub Actionsの `.github/workflows/build-artifacts.yml` を手動実行（Actionsタブ →
+「Build distributable artifacts」→ Run workflow）すると、以下がワークフローの
+Artifacts として生成されます。バージョンタグ（`v*`）をpushした場合も自動実行されます。
+
+- `SlackMsgReader-macOS`: `SlackMsgReader.dmg`（Applicationsフォルダへドラッグインストール可能）
+- `SlackMsgReader-Windows`: `SlackMsgReaderSetup.exe`（Inno Setup製インストーラー）
+
+Actionsの実行結果ページの「Artifacts」欄からダウンロードできます（GitHubの仕様上、
+Artifactsは既定で90日間保持されます）。
 
 ## セキュリティ
 
