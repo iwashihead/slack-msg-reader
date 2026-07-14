@@ -39,8 +39,12 @@ jobs:
         run: python packaging/gui_smoke_test.py --out gui_windows_screenshot.png
 
       - name: Launch the dedicated Chrome and verify CDP comes up
+        # Generous timeout: a loaded/cold Windows runner can take a while for
+        # Chrome's first launch (fresh profile, no warm disk cache) -- this
+        # step flaked once at 30s under normal load, well past how long it
+        # takes as a rule (~10-15s), so 90s is margin, not a new baseline.
         run: |
-          python -c "from slack_msg_reader.scraper import chrome_launcher; ready = chrome_launcher.launch(timeout_seconds=30); print('CDP ready:', ready); import sys; sys.exit(0 if ready else 1)"
+          python -c "from slack_msg_reader.scraper import chrome_launcher; ready = chrome_launcher.launch(timeout_seconds=90); print('CDP ready:', ready); import sys; sys.exit(0 if ready else 1)"
 
       - name: Stop the dedicated Chrome
         if: always()
