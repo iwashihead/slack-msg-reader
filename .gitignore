@@ -7,3 +7,5 @@ data/*.db-journal
 data/exports/
 .DS_Store
 *.egg-info/
+packaging/build/
+packaging/dist/

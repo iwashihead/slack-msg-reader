@@ -6,19 +6,58 @@ Launches a Chrome instance dedicated to this tool: a persistent profile
 Deliberately never touches your everyday Chrome -- a distinct
 --user-data-dir means this runs as a fully separate process that can
 coexist with your normal, already-running Chrome window.
+
+Works on both macOS and Windows: `find_chrome_executable()` checks the
+usual install locations for each OS, falling back to whatever `chrome` /
+`google-chrome` resolves to on PATH.
 """
 
 import os
+import shutil
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
-from slack_msg_reader.config import CDP_PORT, CDP_URL, CHROME_APP_PATH, CHROME_PROFILE_DIR
+from slack_msg_reader.config import CDP_PORT, CDP_URL, CHROME_PROFILE_DIR
+
+_MACOS_CANDIDATES = [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    str(Path.home() / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+]
+
+_WINDOWS_CANDIDATES = [
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+]
 
 
 class ChromeNotFoundError(RuntimeError):
     pass
+
+
+def find_chrome_executable() -> str | None:
+    if sys.platform == "darwin":
+        candidates = _MACOS_CANDIDATES
+        which_names = ["google-chrome"]
+    elif sys.platform.startswith("win"):
+        candidates = _WINDOWS_CANDIDATES
+        which_names = ["chrome", "chrome.exe"]
+    else:
+        candidates = []
+        which_names = ["google-chrome", "chromium", "chromium-browser"]
+
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    for name in which_names:
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
 
 
 def is_cdp_ready() -> bool:
@@ -34,13 +73,16 @@ def launch(open_url: str = "https://app.slack.com/client", timeout_seconds: floa
     if is_cdp_ready():
         return True
 
-    if not os.path.exists(CHROME_APP_PATH):
-        raise ChromeNotFoundError(f"Chrome not found at {CHROME_APP_PATH}")
+    chrome_path = find_chrome_executable()
+    if not chrome_path:
+        raise ChromeNotFoundError(
+            "Could not find a Google Chrome install. Please install Chrome and try again."
+        )
 
     CHROME_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     subprocess.Popen(
         [
-            CHROME_APP_PATH,
+            chrome_path,
             f"--remote-debugging-port={CDP_PORT}",
             f"--user-data-dir={CHROME_PROFILE_DIR}",
             "--no-first-run",

@@ -19,6 +19,73 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("collect")
 
 
+def run_inspect() -> tuple[str, list[dict]]:
+    """Attaches to the Slack tab and returns (page_url, channels). Reusable by CLI and GUI."""
+    with connect_slack_page() as page:
+        return page.url, list_channels(page)
+
+
+def run_collect(kind: str = "all", name_contains: str | None = None, full_history: bool = False) -> int:
+    """Runs one full collection pass. Returns the number of channels visited.
+
+    Shared by the CLI `collect` command and the GUI's Collect tab -- progress
+    is reported purely through the `collect` logger (attach a handler to see it),
+    not return values, so both callers get identical behavior.
+    """
+    init_db()
+    with connect_slack_page() as page:
+        team_id = current_team_id(page)
+        channels = list_channels(page)
+
+        if kind != "all":
+            channels = [c for c in channels if c["kind"] == kind]
+        if name_contains:
+            needle = name_contains.lower()
+            channels = [c for c in channels if needle in c["name"].lower()]
+
+        log.info("Collecting from %d channel(s)...", len(channels))
+
+        for ch in channels:
+            log.info("Channel: [%s] %s (%s)", ch["kind"], ch["name"], ch["id"])
+
+            with session_scope() as session:
+                repository.upsert_channel(session, ch["id"], ch["name"], ch["kind"])
+                last_ts = None if full_history else repository.latest_ts_for_channel(session, ch["id"])
+                seed_sender = None if full_history else repository.latest_message_sender_name(session, ch["id"])
+
+            try:
+                navigate_to_channel(page, team_id, ch["id"])
+            except Exception:
+                log.exception("Failed to open channel %s, skipping", ch["id"])
+                continue
+
+            messages = collect_channel_messages(page, last_ts, seed_sender=seed_sender)
+            log.info("  -> %d new message(s)", len(messages))
+            if not messages:
+                continue
+
+            with session_scope() as session:
+                for m in messages:
+                    if repository.message_exists(session, ch["id"], m["ts"]):
+                        continue
+                    user_id = slugify_user(m["sender"])
+                    repository.upsert_user(session, user_id, m["sender"])
+                    repository.insert_message(
+                        session,
+                        channel_id=ch["id"],
+                        ts=m["ts"],
+                        user_id=user_id,
+                        text=m["text"],
+                        thread_ts=None,
+                        is_thread_parent=m["reply_count"] > 0,
+                        reply_count=m["reply_count"],
+                        posted_at=ts_to_datetime(m["ts"]),
+                        reactions=m["reactions"],
+                    )
+
+        return len(channels)
+
+
 @click.group()
 def cli():
     """Slack message archiver: attaches to an already-logged-in browser tab,
@@ -60,21 +127,21 @@ def chrome():
 def inspect_cmd():
     """Calibration helper: confirms the DOM selectors still match your Slack tab."""
     try:
-        with connect_slack_page() as page:
-            click.echo(f"Attached to: {page.url}")
-            channels = list_channels(page)
-            click.echo(f"Sidebar channels found: {len(channels)}")
-            for ch in channels[:10]:
-                click.echo(f"  - [{ch['kind']}] {ch['id']}  {ch['name']}")
-            if len(channels) > 10:
-                click.echo(f"  ... and {len(channels) - 10} more")
-            if not channels:
-                click.echo(
-                    "No channels matched. Selectors in scraper/selectors.py likely need "
-                    "updating for your Slack version -- inspect the sidebar in Chrome DevTools."
-                )
+        url, channels = run_inspect()
     except SlackTabNotFoundError as e:
         raise click.ClickException(str(e))
+
+    click.echo(f"Attached to: {url}")
+    click.echo(f"Sidebar channels found: {len(channels)}")
+    for ch in channels[:10]:
+        click.echo(f"  - [{ch['kind']}] {ch['id']}  {ch['name']}")
+    if len(channels) > 10:
+        click.echo(f"  ... and {len(channels) - 10} more")
+    if not channels:
+        click.echo(
+            "No channels matched. Selectors in scraper/selectors.py likely need "
+            "updating for your Slack version -- inspect the sidebar in Chrome DevTools."
+        )
 
 
 @cli.command()
@@ -92,57 +159,8 @@ def inspect_cmd():
 )
 def collect(kind, name_contains, full_history):
     """Scrape visible channels/DMs and store new messages in the SQLite DB."""
-    init_db()
     try:
-        with connect_slack_page() as page:
-            team_id = current_team_id(page)
-            channels = list_channels(page)
-
-            if kind != "all":
-                channels = [c for c in channels if c["kind"] == kind]
-            if name_contains:
-                needle = name_contains.lower()
-                channels = [c for c in channels if needle in c["name"].lower()]
-
-            click.echo(f"Collecting from {len(channels)} channel(s)...")
-
-            for ch in channels:
-                log.info("Channel: [%s] %s (%s)", ch["kind"], ch["name"], ch["id"])
-
-                with session_scope() as session:
-                    repository.upsert_channel(session, ch["id"], ch["name"], ch["kind"])
-                    last_ts = None if full_history else repository.latest_ts_for_channel(session, ch["id"])
-                    seed_sender = None if full_history else repository.latest_message_sender_name(session, ch["id"])
-
-                try:
-                    navigate_to_channel(page, team_id, ch["id"])
-                except Exception:
-                    log.exception("Failed to open channel %s, skipping", ch["id"])
-                    continue
-
-                messages = collect_channel_messages(page, last_ts, seed_sender=seed_sender)
-                log.info("  -> %d new message(s)", len(messages))
-                if not messages:
-                    continue
-
-                with session_scope() as session:
-                    for m in messages:
-                        if repository.message_exists(session, ch["id"], m["ts"]):
-                            continue
-                        user_id = slugify_user(m["sender"])
-                        repository.upsert_user(session, user_id, m["sender"])
-                        repository.insert_message(
-                            session,
-                            channel_id=ch["id"],
-                            ts=m["ts"],
-                            user_id=user_id,
-                            text=m["text"],
-                            thread_ts=None,
-                            is_thread_parent=m["reply_count"] > 0,
-                            reply_count=m["reply_count"],
-                            posted_at=ts_to_datetime(m["ts"]),
-                            reactions=m["reactions"],
-                        )
+        run_collect(kind=kind, name_contains=name_contains, full_history=full_history)
     except SlackTabNotFoundError as e:
         raise click.ClickException(str(e))
 

@@ -17,7 +17,6 @@ CDP_URL = f"http://localhost:{CDP_PORT}"
 # reasons, so this must be a separate directory -- but it's kept around
 # between runs so you only log into Slack here once.
 CHROME_PROFILE_DIR = Path.home() / ".slack-msg-reader" / "chrome-profile"
-CHROME_APP_PATH = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 # How long to wait for new message elements to render after each scroll (ms).
 SCROLL_WAIT_MS = 600
