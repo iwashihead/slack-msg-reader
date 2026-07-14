@@ -38,6 +38,22 @@ def latest_ts_for_channel(session: Session, channel_id: str) -> str | None:
     return row[0] if row else None
 
 
+def latest_message_sender_name(session: Session, channel_id: str) -> str | None:
+    """Display name of whoever sent the most recent stored message in this channel.
+
+    Used to seed forward-fill when a new `collect` batch's first message
+    turns out to be a grouped continuation of a message from a prior run.
+    """
+    row = session.execute(
+        select(User.display_name)
+        .join(Message, Message.user_id == User.id)
+        .where(Message.channel_id == channel_id)
+        .order_by(Message.ts.desc())
+        .limit(1)
+    ).first()
+    return row[0] if row else None
+
+
 def message_exists(session: Session, channel_id: str, ts: str) -> bool:
     return (
         session.execute(

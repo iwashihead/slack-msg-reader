@@ -22,17 +22,21 @@ playwright install chromium   # ブラウザ自体は使わないが、Playwrigh
 
 ## 使い方
 
-### 1. Chromeをリモートデバッグ有効で起動し、Slackに手動ログイン
-
-```bash
-# 既存のChromeプロセスが起動中なら一度終了してから実行してください
-open -a "Google Chrome" --args --remote-debugging-port=9222
-```
-
-開いたChromeで `https://app.slack.com` にアクセスし、**手動で**普段通りログインしてください。
-ログイン後、そのタブ (`app.slack.com/client/...`) を開いたままにしておきます。
+### 1. 収集用Chromeを起動し、Slackに手動ログイン
 
 `pip install -e .` すると `slack` コマンドが使えるようになります（venv を `activate` した状態で実行してください）。
+
+```bash
+slack chrome
+```
+
+普段使っているChromeとは別に、このツール専用の永続プロファイル
+(`~/.slack-msg-reader/chrome-profile`) でChromeを起動します（普段のChromeウィンドウはそのままで大丈夫です）。
+初回だけ、開いたウィンドウで `https://app.slack.com` に**手動で**普段通りログインしてください。
+プロファイルは永続化されるので、2回目以降は基本的に再ログイン不要です。
+
+このChromeプロセスはPCを再起動したりウィンドウを閉じたりすると終了します。`slack inspect` や
+`slack collect` を実行して `ECONNREFUSED` になる場合は、まず `slack chrome` を実行してください。
 
 ### 2. セレクタが合っているか確認 (初回・Slack更新後は必須)
 
@@ -79,6 +83,7 @@ Jupyter等から直接importして自由に集計・可視化を組み立てる�
 - ユーザーはSlackのユーザーIDではなく、表示名を正規化したキーで管理しています（表示名変更で別ユーザー扱いになります）。
 - 単語頻度分析は簡易的な空白/記号区切りで、日本語の形態素解析はしていません（本格的にやるなら janome/MeCab等を追加してください）。
 - パブリック/プライベートチャンネルは区別せずどちらも `kind=channel` として扱っています（DM/group DMは `kind=dm`）。
+- Slackは同じ送信者の連続投稿をグルーピングして送信者名を省略表示します。DOM上も省略された投稿には送信者情報が一切残らないため、直前に送信者名が確認できたメッセージから forward-fill（前方補完）しています。まれに、差分収集の境界（前回収集の最後のメッセージと今回の最初のメッセージ）でDB側の直前送信者を参照できないと `unknown` になることがあります。
 
 ## ディレクトリ構成
 
@@ -94,6 +99,7 @@ src/slack_msg_reader/
     repository.py        upsert/insertヘルパー
   scraper/
     browser.py            CDP経由でSlackタブにアタッチ
+    chrome_launcher.py    収集用Chrome(専用プロファイル)の起動・待機
     selectors.py          DOMセレクタ定義 (Slack更新時はここを直す)
     channel_list.py       サイドバーからチャンネル一覧を取得
     parser.py              メッセージDOMのパース
