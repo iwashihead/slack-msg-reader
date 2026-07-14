@@ -129,3 +129,9 @@ def top_words(top_n: int = 30, min_len: int = 2) -> pd.DataFrame:
                 continue
             counter[token] += 1
     return pd.DataFrame(counter.most_common(top_n), columns=["word", "count"])
+
+
+def list_known_users() -> list[str]:
+    """Display names of everyone with at least one archived message, for pickers/dropdowns."""
+    sql = "SELECT DISTINCT display_name FROM users ORDER BY display_name"
+    return pd.read_sql(sql, _engine())["display_name"].tolist()

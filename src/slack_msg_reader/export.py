@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 
 from slack_msg_reader.db.database import session_scope
-from slack_msg_reader.db.models import Channel, Message
+from slack_msg_reader.db.models import Channel, Message, User
 
 DEFAULT_MAX_CHARS = 300_000
 DEFAULT_MAX_FILES = 10
@@ -48,13 +48,31 @@ def _format_message_line(msg: Message) -> str:
     return f"- **{when}** {sender}: {text}{suffix}\n"
 
 
+def _group_messages_into_blocks(messages: list[Message]) -> list[ChannelBlock]:
+    """Groups already-fetched messages (assumed ordered by channel, then ts) into one block per channel."""
+    blocks: dict[str, ChannelBlock] = {}
+    order: list[str] = []
+    for msg in messages:
+        cid = msg.channel_id
+        if cid not in blocks:
+            blocks[cid] = ChannelBlock(header=f"## {msg.channel.name} ({msg.channel.kind})\n\n")
+            order.append(cid)
+        blocks[cid].lines.append(_format_message_line(msg))
+    return [blocks[cid] for cid in order]
+
+
 def fetch_channel_blocks(
     channel: str | None = None,
     user: str | None = None,
     since: datetime | None = None,
     until: datetime | None = None,
 ) -> list[ChannelBlock]:
-    """Queries the archive and groups matching messages into one block per channel."""
+    """Queries the archive and groups matching messages into one block per channel.
+
+    Note `user` restricts to messages *sent by* that person -- for "every
+    message in the channels a person took part in" (i.e. their side of a
+    conversation plus everyone else's), see fetch_channel_blocks_for_participant.
+    """
     with session_scope() as session:
         stmt = (
             select(Message)
@@ -72,17 +90,51 @@ def fetch_channel_blocks(
             stmt = stmt.where(Message.posted_at <= until)
 
         messages = session.execute(stmt).unique().scalars().all()
+        return _group_messages_into_blocks(messages)
 
-        blocks: dict[str, ChannelBlock] = {}
-        order: list[str] = []
-        for msg in messages:
-            cid = msg.channel_id
-            if cid not in blocks:
-                blocks[cid] = ChannelBlock(header=f"## {msg.channel.name} ({msg.channel.kind})\n\n")
-                order.append(cid)
-            blocks[cid].lines.append(_format_message_line(msg))
 
-    return [blocks[cid] for cid in order]
+def fetch_channel_blocks_for_participant(
+    participant: str,
+    since: datetime | None = None,
+    until: datetime | None = None,
+) -> list[ChannelBlock]:
+    """Full-context export for one person: every message (from anyone) in every
+    channel/DM where `participant` posted at least once during the window.
+
+    Unlike fetch_channel_blocks(user=...), this deliberately does NOT filter
+    messages down to that person's own -- understanding what someone was
+    doing requires the other side of their conversations too.
+    """
+    with session_scope() as session:
+        participant_channels_stmt = (
+            select(Message.channel_id)
+            .join(User, Message.user_id == User.id)
+            .where(User.display_name == participant)
+            .distinct()
+        )
+        if since:
+            participant_channels_stmt = participant_channels_stmt.where(Message.posted_at >= since)
+        if until:
+            participant_channels_stmt = participant_channels_stmt.where(Message.posted_at <= until)
+
+        channel_ids = session.execute(participant_channels_stmt).scalars().all()
+        if not channel_ids:
+            return []
+
+        stmt = (
+            select(Message)
+            .join(Channel)
+            .options(joinedload(Message.channel), joinedload(Message.user), joinedload(Message.reactions))
+            .where(Message.channel_id.in_(channel_ids))
+            .order_by(Channel.name, Message.ts.asc())
+        )
+        if since:
+            stmt = stmt.where(Message.posted_at >= since)
+        if until:
+            stmt = stmt.where(Message.posted_at <= until)
+
+        messages = session.execute(stmt).unique().scalars().all()
+        return _group_messages_into_blocks(messages)
 
 
 def _split_oversized_block(block: ChannelBlock, max_chars: int) -> list[str]:
@@ -150,17 +202,15 @@ def chunk_blocks(blocks: list[ChannelBlock], max_chars: int, max_files: int) -> 
     return files, len(files) > max_files
 
 
-def write_export(
+def write_blocks(
+    blocks: list[ChannelBlock],
     output_dir: Path,
-    channel: str | None = None,
-    user: str | None = None,
-    since: datetime | None = None,
-    until: datetime | None = None,
     max_chars: int = DEFAULT_MAX_CHARS,
     max_files: int = DEFAULT_MAX_FILES,
     base_name: str = "slack_export",
 ) -> tuple[list[Path], bool]:
-    blocks = fetch_channel_blocks(channel=channel, user=user, since=since, until=until)
+    """Chunks pre-fetched blocks and writes them to output_dir. Shared by
+    write_export() and report.generate_report()."""
     if not blocks:
         return [], False
 
@@ -179,3 +229,17 @@ def write_export(
             paths.append(path)
 
     return paths, truncated
+
+
+def write_export(
+    output_dir: Path,
+    channel: str | None = None,
+    user: str | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    max_chars: int = DEFAULT_MAX_CHARS,
+    max_files: int = DEFAULT_MAX_FILES,
+    base_name: str = "slack_export",
+) -> tuple[list[Path], bool]:
+    blocks = fetch_channel_blocks(channel=channel, user=user, since=since, until=until)
+    return write_blocks(blocks, output_dir, max_chars=max_chars, max_files=max_files, base_name=base_name)
