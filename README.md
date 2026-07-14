@@ -32,10 +32,12 @@ open -a "Google Chrome" --args --remote-debugging-port=9222
 開いたChromeで `https://app.slack.com` にアクセスし、**手動で**普段通りログインしてください。
 ログイン後、そのタブ (`app.slack.com/client/...`) を開いたままにしておきます。
 
+`pip install -e .` すると `slack` コマンドが使えるようになります（venv を `activate` した状態で実行してください）。
+
 ### 2. セレクタが合っているか確認 (初回・Slack更新後は必須)
 
 ```bash
-python -m slack_msg_reader.collect inspect
+slack inspect
 ```
 
 サイドバーのチャンネル一覧が出力されればOKです。0件の場合は `scraper/selectors.py` を
@@ -44,8 +46,8 @@ DevToolsの実際のDOMに合わせて調整してください。
 ### 3. DB初期化 & 収集
 
 ```bash
-python -m slack_msg_reader.collect init      # 初回のみ: data/slack_archive.db を作成
-python -m slack_msg_reader.collect collect    # 全チャンネル/DMを収集 (2回目以降は差分収集)
+slack init      # 初回のみ: data/slack_archive.db を作成
+slack collect    # 全チャンネル/DMを収集 (2回目以降は差分収集)
 ```
 
 オプション:
@@ -58,14 +60,14 @@ python -m slack_msg_reader.collect collect    # 全チャンネル/DMを収集 (
 ### 4. 分析
 
 ```bash
-python -m slack_msg_reader.analysis.cli channels     # チャンネル別メッセージ数
-python -m slack_msg_reader.analysis.cli users --channel general
-python -m slack_msg_reader.analysis.cli hourly        # 時間帯別の投稿量
-python -m slack_msg_reader.analysis.cli weekday       # 曜日別の投稿量
-python -m slack_msg_reader.analysis.cli threads       # リプライ数の多いスレッド
-python -m slack_msg_reader.analysis.cli reactions     # よく使われるリアクション
-python -m slack_msg_reader.analysis.cli words         # 簡易ワード頻度 (日本語は簡易分割のみ)
-python -m slack_msg_reader.analysis.cli search "キーワード"
+slack analyze channels     # チャンネル別メッセージ数
+slack analyze users --channel general
+slack analyze hourly        # 時間帯別の投稿量
+slack analyze weekday       # 曜日別の投稿量
+slack analyze threads       # リプライ数の多いスレッド
+slack analyze reactions     # よく使われるリアクション
+slack analyze words         # 簡易ワード頻度 (日本語は簡易分割のみ)
+slack analyze search "キーワード"
 ```
 
 `src/slack_msg_reader/analysis/queries.py` の各関数はpandas DataFrameを返すので、
@@ -76,14 +78,15 @@ Jupyter等から直接importして自由に集計・可視化を組み立てる�
 - スレッド返信の本文までは取得しません（親メッセージの `reply_count` のみ）。
 - ユーザーはSlackのユーザーIDではなく、表示名を正規化したキーで管理しています（表示名変更で別ユーザー扱いになります）。
 - 単語頻度分析は簡易的な空白/記号区切りで、日本語の形態素解析はしていません（本格的にやるなら janome/MeCab等を追加してください）。
-- パブリック/プライベートチャンネルはサイドバーのセクション見出しで大まかに判定しており、厳密な区別はしていません（`kind` は `channel` にまとめています）。
+- パブリック/プライベートチャンネルは区別せずどちらも `kind=channel` として扱っています（DM/group DMは `kind=dm`）。
 
 ## ディレクトリ構成
 
 ```
 src/slack_msg_reader/
   config.py            設定値 (DBパス、CDP接続先、スクロール設定)
-  collect.py            収集用CLIエントリポイント
+  cli.py                 統合CLIエントリポイント (`slack` コマンド本体)
+  collect.py            収集コマンド群 (init/inspect/collect)
   util.py                共通ユーティリティ
   db/
     models.py            SQLAlchemyモデル (Channel/User/Message/Reaction)
