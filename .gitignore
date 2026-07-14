@@ -4,5 +4,6 @@ __pycache__/
 venv/
 data/*.db
 data/*.db-journal
+data/exports/
 .DS_Store
 *.egg-info/

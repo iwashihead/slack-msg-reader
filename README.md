@@ -77,6 +77,25 @@ slack analyze search "キーワード"
 `src/slack_msg_reader/analysis/queries.py` の各関数はpandas DataFrameを返すので、
 Jupyter等から直接importして自由に集計・可視化を組み立てることもできます。
 
+### 5. AI分析用にエクスポート
+
+外部LLM（Claude等）に読ませて分析させるためのMarkdownファイルを出力します。
+チャンネルごとにまとめ、基本的には1ファイルに収めますが、`--max-chars` を超える場合は
+`--max-files`（デフォルト10）を上限に自動で分割します（モデルの入力文字数制限に対応するため）。
+
+```bash
+slack export                              # 全件を1〜10ファイルに出力 (data/exports/)
+slack export --channel general            # チャンネルで絞り込み
+slack export --user haru                  # 送信者で絞り込み
+slack export --since 2026-07-01 --until 2026-07-31   # 期間で絞り込み
+slack export --max-chars 100000 --max-files 5         # 分割の閾値を調整
+```
+
+分割は必ずメッセージの区切り・チャンネルの区切りで行われ、1メッセージの途中で
+ファイルが切れることはありません。1チャンネルの内容だけで `--max-chars` を超える場合は、
+そのチャンネル内でメッセージ単位に分割し、続きのファイルにも同じ見出しを
+`(continued)` 付きで繰り返します。
+
 ## 既知の制約 (MVP)
 
 - スレッド返信の本文までは取得しません（親メッセージの `reply_count` のみ）。
@@ -90,8 +109,9 @@ Jupyter等から直接importして自由に集計・可視化を組み立てる�
 ```
 src/slack_msg_reader/
   config.py            設定値 (DBパス、CDP接続先、スクロール設定)
-  cli.py                 統合CLIエントリポイント (`slack` コマンド本体)
+  cli.py                 統合CLIエントリポイント (`slack` コマンド本体、export含む)
   collect.py            収集コマンド群 (init/inspect/collect)
+  export.py             AI分析用Markdownエクスポート (フィルタ・チャンネル単位分割)
   util.py                共通ユーティリティ
   db/
     models.py            SQLAlchemyモデル (Channel/User/Message/Reaction)
