@@ -1,11 +1,10 @@
 """
 Enumerates the channels/DMs visible in the Slack sidebar for the logged-in user.
 
-Slack no longer reliably distinguishes public vs. private channels by ID
-prefix, and the sidebar's own icon markup for that distinction is not stable
-enough to key logic off. For this tool the meaningful split is only
-"channel" (public or private, scraped identically) vs "dm" (DM or group DM),
-read from the section heading text ("Channels" vs "Direct messages").
+Each sidebar row carries its own `data-qa-channel-sidebar-channel-type`
+attribute (confirmed values seen in practice: "im" for 1:1 DMs; Slack also
+uses "channel"/"private_channel"/"mpdm" for the other kinds), so no section-
+heading guessing is needed -- we classify straight off that attribute.
 """
 
 from playwright.sync_api import Page
@@ -14,39 +13,26 @@ from slack_msg_reader.scraper.selectors import (
     SIDEBAR_CHANNEL_ID_ATTR,
     SIDEBAR_CHANNEL_ITEM,
     SIDEBAR_CHANNEL_NAME,
-    SIDEBAR_SECTION_HEADER,
+    SIDEBAR_CHANNEL_TYPE_ATTR,
 )
 
 _LIST_CHANNELS_JS = """
-([itemSel, idAttr, nameSel, headerSel]) => {
+([itemSel, idAttr, typeAttr, nameSel]) => {
     const items = Array.from(document.querySelectorAll(itemSel));
-    const headers = Array.from(document.querySelectorAll(headerSel));
-
-    function sectionFor(el) {
-        let best = null;
-        for (const h of headers) {
-            if (h.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) {
-                best = h;
-            }
-        }
-        return best ? best.textContent.trim() : '';
-    }
-
-    return items.map((a) => {
-        const nameEl = a.querySelector(nameSel);
+    return items.map((el) => {
+        const nameEl = el.querySelector(nameSel);
         return {
-            id: a.getAttribute(idAttr),
-            name: (nameEl ? nameEl.textContent : a.textContent).trim(),
-            section: sectionFor(a),
+            id: el.getAttribute(idAttr),
+            name: (nameEl ? nameEl.textContent : el.textContent).trim(),
+            raw_type: el.getAttribute(typeAttr),
         };
     });
 }
 """
 
 
-def _classify(section_text: str) -> str:
-    lowered = section_text.lower()
-    if "direct" in lowered or "dm" in lowered:
+def _classify(raw_type: str | None) -> str:
+    if raw_type in ("im", "mpdm", "mpim"):
         return "dm"
     return "channel"
 
@@ -56,12 +42,12 @@ def list_channels(page: Page, max_scroll_attempts: int = 40) -> list[dict]:
 
     Returns a de-duplicated list of {id, name, kind} dicts.
     """
-    sidebar = page.locator('[data-qa="workspace-nav"], nav').first
+    sidebar = page.locator('[data-qa="slack_kit_list"], nav').first
     previous_count = -1
     for _ in range(max_scroll_attempts):
         raw = page.evaluate(
             _LIST_CHANNELS_JS,
-            [SIDEBAR_CHANNEL_ITEM, SIDEBAR_CHANNEL_ID_ATTR, SIDEBAR_CHANNEL_NAME, SIDEBAR_SECTION_HEADER],
+            [SIDEBAR_CHANNEL_ITEM, SIDEBAR_CHANNEL_ID_ATTR, SIDEBAR_CHANNEL_TYPE_ATTR, SIDEBAR_CHANNEL_NAME],
         )
         if len(raw) == previous_count:
             break
@@ -75,7 +61,7 @@ def list_channels(page: Page, max_scroll_attempts: int = 40) -> list[dict]:
 
     raw = page.evaluate(
         _LIST_CHANNELS_JS,
-        [SIDEBAR_CHANNEL_ITEM, SIDEBAR_CHANNEL_ID_ATTR, SIDEBAR_CHANNEL_NAME, SIDEBAR_SECTION_HEADER],
+        [SIDEBAR_CHANNEL_ITEM, SIDEBAR_CHANNEL_ID_ATTR, SIDEBAR_CHANNEL_TYPE_ATTR, SIDEBAR_CHANNEL_NAME],
     )
 
     seen: dict[str, dict] = {}
@@ -83,5 +69,5 @@ def list_channels(page: Page, max_scroll_attempts: int = 40) -> list[dict]:
         cid = entry.get("id")
         if not cid:
             continue
-        seen[cid] = {"id": cid, "name": entry["name"], "kind": _classify(entry["section"])}
+        seen[cid] = {"id": cid, "name": entry["name"], "kind": _classify(entry.get("raw_type"))}
     return list(seen.values())
