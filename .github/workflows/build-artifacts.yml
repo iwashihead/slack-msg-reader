@@ -1,0 +1,73 @@
+name: Build distributable artifacts
+
+# Manual by default -- these are full application builds (PyInstaller +
+# installer packaging) on both OSes, not something needed on every push.
+# Also runs on version tags so cutting a release always produces artifacts,
+# and on PRs that touch the packaging itself so a broken build/installer
+# script gets caught before merge instead of at release time.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+    paths:
+      - "packaging/**"
+      - ".github/workflows/build-artifacts.yml"
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project (build extras)
+        run: pip install -e ".[build]"
+
+      - name: Build SlackMsgReader.app with PyInstaller
+        run: pyinstaller packaging/SlackMsgReader.spec --distpath packaging/dist --workpath packaging/build --noconfirm
+
+      - name: Package as a drag-to-install .dmg
+        run: |
+          set -euo pipefail
+          STAGE="$RUNNER_TEMP/dmg_stage"
+          mkdir -p "$STAGE"
+          cp -R packaging/dist/SlackMsgReader.app "$STAGE/"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "SlackMsgReader" -srcfolder "$STAGE" -ov -format UDZO packaging/SlackMsgReader.dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SlackMsgReader-macOS
+          path: packaging/SlackMsgReader.dmg
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project (build extras)
+        run: pip install -e ".[build]"
+
+      - name: Build SlackMsgReader.exe with PyInstaller
+        run: pyinstaller packaging/SlackMsgReader.spec --distpath packaging/dist --workpath packaging/build --noconfirm
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build the installer
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows_installer.iss'
+        shell: pwsh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SlackMsgReader-Windows
+          path: packaging/installer_output/SlackMsgReaderSetup.exe
