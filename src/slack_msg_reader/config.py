@@ -1,7 +1,19 @@
+import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = PROJECT_ROOT / "data"
+
+# When frozen (PyInstaller), __file__ resolves inside the app bundle itself,
+# which is read-only when run straight from a mounted .dmg and shouldn't be
+# written into even once installed (breaks code-signing, needs elevated
+# permissions under Program Files on Windows, etc). Use a per-user directory
+# instead, matching CHROME_PROFILE_DIR below. Source/CLI runs keep the data
+# next to the project as before.
+if getattr(sys, "frozen", False):
+    DATA_DIR = Path.home() / ".slack-msg-reader" / "data"
+else:
+    DATA_DIR = PROJECT_ROOT / "data"
+
 DB_PATH = DATA_DIR / "slack_archive.db"
 DB_URL = f"sqlite:///{DB_PATH}"
 

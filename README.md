@@ -128,6 +128,11 @@ pyinstaller packaging/SlackMsgReader.spec --distpath packaging/dist --workpath p
   `C:\Program Files\Google\Chrome\Application\chrome.exe` 等の標準パスをチェックしますが、
   実機での動作確認は別途必要です。
 
+パッケージ版（.app / .exe）実行時のデータ（SQLite DB等）は `~/.slack-msg-reader/data/` に
+保存されます（ソースから `slack` CLIで動かす場合は従来通り `data/` プロジェクト直下）。
+パッケージ版はアプリバンドル自身の場所に書き込もうとすると、マウントした `.dmg` から
+直接起動した場合や権限次第で失敗するため、ホームディレクトリ配下に固定しています。
+
 ## セキュリティ
 
 依存パッケージは [pip-audit](https://github.com/pypa/pip-audit) で監査しています（PyPI Advisory DB / OSV の
