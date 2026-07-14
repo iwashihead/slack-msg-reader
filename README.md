@@ -96,12 +96,38 @@ slack export --max-chars 100000 --max-files 5         # 分割の閾値を調整
 そのチャンネル内でメッセージ単位に分割し、続きのファイルにも同じ見出しを
 `(continued)` 付きで繰り返します。
 
-### 6. GUIアプリ
+### 6. 特定の人を中心にしたレポート生成（週報などの分析用）
+
+「今週〇〇さんがSlackで何をしていたか」のような分析をしたいとき向けの機能です。
+`--user` で指定した人が**発言したチャンネル/DM**を洗い出し、その中の**全員の発言**
+（指定した人の発言だけでなく、会話相手の発言も含む）を期間で絞り込んでMarkdown出力します。
+片側の発言だけでは会話の文脈が分からないため、あえて相手側の発言も含めています。
+
+同時に、AIチャットボットに投げるための分析用プロンプト（`report_prompt.txt`）も生成します。
+プロンプトは「今回の期間中にやったこと」「新たに発生したタスク」「期限」
+「良くなかったコミュニケーション」「返信漏れ・未対応の案件」の5観点で分析するよう
+指示する内容になっています。
+
+**このツール自体はAI APIを一切呼び出しません。** 出力された `report_conversations*.md` と
+`report_prompt.txt` を、自分が使っているAIチャットボット（Claude等）に手動で渡してください。
+
+```bash
+slack report --user haru --this-week                  # 今週(月曜〜現在)のharuの会話を分析用に出力
+slack report --user haru --since 2026-07-01 --until 2026-07-31
+slack report --user haru --this-week --output-dir ./weekly_report
+```
+
+出力先はデフォルトで `data/reports/` です。分割の挙動（`--max-chars` / `--max-files`）は
+`slack export` と同じロジックを共有しています。
+
+### 7. GUIアプリ
 
 CLIの代わりにデスクトップGUI（PySide6/Qt製、Mac/Windows両対応）からも操作できます。
-「Chrome & Collect」「Export」「Analyze」の3タブで、これまでのCLIコマンドと同じ機能を
-すべてカバーしています。Playwright/CDPを使う処理（Chrome起動・Inspect・Collect）は
+「Chrome & Collect」「Export」「Report」「Analyze」の4タブで、これまでのCLIコマンドと
+同じ機能をすべてカバーしています。Playwright/CDPを使う処理（Chrome起動・Inspect・Collect）は
 バックグラウンドスレッドで実行され、ログはGUI内にリアルタイム表示されます。
+Reportタブにはユーザー選択（既知のユーザー一覧から選択可）・「今週」ワンクリック指定・
+生成したプロンプトのクリップボードコピーボタンがあります。
 
 ```bash
 pip install -e ".[gui]"
@@ -162,6 +188,7 @@ src/slack_msg_reader/
   cli.py                 統合CLIエントリポイント (`slack` コマンド本体、export含む)
   collect.py            収集コマンド群 (init/inspect/collect)
   export.py             AI分析用Markdownエクスポート (フィルタ・チャンネル単位分割)
+  report.py              特定ユーザーの文脈込み会話出力 + AI分析プロンプト生成
   util.py                共通ユーティリティ
   db/
     models.py            SQLAlchemyモデル (Channel/User/Message/Reaction)
@@ -182,6 +209,7 @@ src/slack_msg_reader/
     main_window.py         3タブ構成のメインウィンドウ
     chrome_tab.py           Chrome起動・Inspect・Collectタブ
     export_tab.py           Exportタブ
+    report_tab.py           Reportタブ
     analyze_tab.py          Analyzeタブ
     workers.py              Playwright呼び出し等をバックグラウンドスレッド化
     log_handler.py          logging→GUIログ表示のブリッジ
