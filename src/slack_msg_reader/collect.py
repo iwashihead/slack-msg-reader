@@ -4,6 +4,7 @@ import click
 
 from slack_msg_reader.db import repository
 from slack_msg_reader.db.database import init_db, session_scope
+from slack_msg_reader.scraper import chrome_launcher
 from slack_msg_reader.scraper.browser import SlackTabNotFoundError, connect_slack_page
 from slack_msg_reader.scraper.channel_list import list_channels
 from slack_msg_reader.scraper.message_scraper import (
@@ -29,6 +30,30 @@ def init():
     """Create the SQLite schema."""
     init_db()
     click.echo("DB initialized.")
+
+
+@cli.command()
+def chrome():
+    """Start (or reuse) the dedicated Chrome used for collection.
+
+    Runs alongside your everyday Chrome without disturbing it. Uses a
+    persistent profile under ~/.slack-msg-reader/chrome-profile, so you only
+    need to log into Slack manually the first time you run this.
+    """
+    try:
+        ready = chrome_launcher.launch()
+    except chrome_launcher.ChromeNotFoundError as e:
+        raise click.ClickException(str(e))
+
+    if not ready:
+        raise click.ClickException(
+            "Chrome started but the remote debugging port never came up. Check that no other "
+            "process is already using it, then try again."
+        )
+    click.echo(
+        "Chrome is ready. If this is the first run, log into Slack manually in the window that "
+        "opened, then leave it open and run `slack inspect` or `slack collect`."
+    )
 
 
 @cli.command(name="inspect")
@@ -87,6 +112,7 @@ def collect(kind, name_contains, full_history):
                 with session_scope() as session:
                     repository.upsert_channel(session, ch["id"], ch["name"], ch["kind"])
                     last_ts = None if full_history else repository.latest_ts_for_channel(session, ch["id"])
+                    seed_sender = None if full_history else repository.latest_message_sender_name(session, ch["id"])
 
                 try:
                     navigate_to_channel(page, team_id, ch["id"])
@@ -94,7 +120,7 @@ def collect(kind, name_contains, full_history):
                     log.exception("Failed to open channel %s, skipping", ch["id"])
                     continue
 
-                messages = collect_channel_messages(page, last_ts)
+                messages = collect_channel_messages(page, last_ts, seed_sender=seed_sender)
                 log.info("  -> %d new message(s)", len(messages))
                 if not messages:
                     continue

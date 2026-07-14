@@ -6,8 +6,18 @@ DB_PATH = DATA_DIR / "slack_archive.db"
 DB_URL = f"sqlite:///{DB_PATH}"
 
 # Chrome must already be running with --remote-debugging-port=<this port>
-# and have a tab logged into Slack (see README).
-CDP_URL = "http://localhost:9222"
+# and have a tab logged into Slack (see README). `slack chrome` starts such
+# a Chrome for you, using a dedicated profile below so it doesn't disturb
+# your everyday Chrome window/profile.
+CDP_PORT = 9222
+CDP_URL = f"http://localhost:{CDP_PORT}"
+
+# Persistent (not throwaway) Chrome profile dedicated to this tool. Chrome
+# refuses to expose remote debugging on your *default* profile for security
+# reasons, so this must be a separate directory -- but it's kept around
+# between runs so you only log into Slack here once.
+CHROME_PROFILE_DIR = Path.home() / ".slack-msg-reader" / "chrome-profile"
+CHROME_APP_PATH = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 # How long to wait for new message elements to render after each scroll (ms).
 SCROLL_WAIT_MS = 600

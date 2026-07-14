@@ -9,6 +9,13 @@ the MVP archive.
 The message's own `data-msg-ts` attribute (present directly on the
 MESSAGE_CONTAINER element) gives the exact Slack `ts` value with no
 regex/href parsing needed -- confirmed against a live session.
+
+Slack visually groups consecutive messages from the same sender: only the
+first message in such a run renders a sender element at all (confirmed
+against a live session -- grouped messages carry no sender info anywhere in
+their DOM, not even in an aria-hidden helper). `sender` is therefore `None`
+for those; the caller (message_scraper.collect_channel_messages) is
+responsible for forward-filling it from the preceding message.
 """
 
 import re
@@ -77,7 +84,8 @@ def _extract_reactions(raw_reactions: list[dict]) -> list[tuple[str, int]]:
 def parse_visible_messages(page: Page) -> list[dict]:
     """Returns parsed dicts for every message container currently in the DOM.
 
-    Fields: sender (display name str), ts (str | None), text, reply_count,
+    Fields: sender (display name str | None -- None means "same as the
+    previous message", see module docstring), ts, text, reply_count,
     reactions (list[(emoji, count)]).
     """
     raw = page.evaluate(
@@ -101,7 +109,7 @@ def parse_visible_messages(page: Page) -> list[dict]:
             continue  # can't dedupe/store without a stable ts, skip
         parsed.append(
             {
-                "sender": item.get("sender") or "unknown",
+                "sender": item.get("sender") or None,
                 "ts": ts,
                 "text": item.get("text") or "",
                 "reply_count": _extract_reply_count(item.get("reply_bar_text")),

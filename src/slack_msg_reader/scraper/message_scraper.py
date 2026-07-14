@@ -50,12 +50,19 @@ def ts_to_datetime(ts: str) -> datetime:
     return datetime.fromtimestamp(float(ts), tz=timezone.utc)
 
 
-def collect_channel_messages(page: Page, last_known_ts: str | None) -> list[dict]:
+def collect_channel_messages(
+    page: Page, last_known_ts: str | None, seed_sender: str | None = None
+) -> list[dict]:
     """Scrolls up through a channel's history, collecting messages newer than last_known_ts.
 
     If last_known_ts is None, walks all the way to the top of the channel
     (full history, bounded by MAX_SCROLLS_PER_CHANNEL as a safety cap).
-    Returns messages sorted oldest-first, deduplicated by ts.
+    Returns messages sorted oldest-first, deduplicated by ts, with `sender`
+    forward-filled (Slack omits the sender element on grouped/consecutive
+    messages -- see parser.py). `seed_sender` should be the sender of the
+    last message already stored for this channel, so the very first message
+    in this batch can inherit it if it turns out to be a grouped
+    continuation of a message from a prior `collect` run.
     """
     collected: dict[str, dict] = {}
     previous_height = -1
@@ -82,4 +89,11 @@ def collect_channel_messages(page: Page, last_known_ts: str | None) -> list[dict
     else:
         log.warning("Hit MAX_SCROLLS_PER_CHANNEL safety cap; history may be incomplete")
 
-    return sorted(collected.values(), key=lambda m: m["ts"])
+    ordered = sorted(collected.values(), key=lambda m: m["ts"])
+    last_sender = seed_sender
+    for msg in ordered:
+        if msg["sender"] is None:
+            msg["sender"] = last_sender or "unknown"
+        else:
+            last_sender = msg["sender"]
+    return ordered
