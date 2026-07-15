@@ -91,9 +91,9 @@ def collect_thread_replies(
 
     try:
         reply_button.click()
-        page.wait_for_selector(THREAD_PANEL, timeout=10000)
+        page.wait_for_selector(THREAD_PANEL, timeout=20000)
     except Exception:
-        log.warning("Could not open thread for ts=%s", parent_ts, exc_info=True)
+        log.warning("Could not open thread for ts=%s -- skipping this thread, continuing collection", parent_ts, exc_info=True)
         return []
     page.wait_for_timeout(400)
 

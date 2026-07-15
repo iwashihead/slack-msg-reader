@@ -50,7 +50,13 @@ _PARSE_JS = """
             const emojiImg = r.querySelector(reactionEmojiImgSel);
             const countEl = r.querySelector(reactionCountSel);
             return {
-                emoji: emojiImg ? emojiImg.getAttribute(reactionEmojiAttr) : null,
+                // Prefer the stringify attribute, but not every emoji variant
+                // carries it (confirmed live: some reactions crash the whole
+                // collect run when two different-but-unidentifiable emoji on
+                // the same message both fell back to a shared placeholder) --
+                // `alt` carries the same ":shortcode:" text in the normal case
+                // and is a second independent chance to get a real identifier.
+                emoji: emojiImg ? (emojiImg.getAttribute(reactionEmojiAttr) || emojiImg.getAttribute('alt')) : null,
                 count_text: countEl ? countEl.textContent : '',
             };
         });
@@ -74,13 +80,22 @@ def _extract_reply_count(reply_bar_text: str | None) -> int:
 
 
 def _extract_reactions(raw_reactions: list[dict]) -> list[tuple[str, int]]:
-    out = []
+    """Returns (emoji, count) pairs, deduplicated by emoji name.
+
+    Merging (summing counts) rather than keeping duplicates as separate
+    entries matters because `reactions` has a UNIQUE(message_id, emoji)
+    constraint: if two genuinely different emoji both fail to yield an
+    identifiable name (confirmed live -- some emoji variants carry neither
+    of the two attributes checked in the JS above) they'd otherwise collide
+    as two "unknown" rows for the same message and crash the insert.
+    """
+    counts: dict[str, int] = {}
     for r in raw_reactions:
         count_m = _DIGITS_RE.search(r.get("count_text") or "")
         count = int(count_m.group(1)) if count_m else 0
         emoji = (r.get("emoji") or "unknown").strip(":") or "unknown"
-        out.append((emoji, count))
-    return out
+        counts[emoji] = counts.get(emoji, 0) + count
+    return list(counts.items())
 
 
 def parse_visible_messages(page: Page, root_selector: str | None = None) -> list[dict]:

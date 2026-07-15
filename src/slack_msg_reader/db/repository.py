@@ -87,6 +87,12 @@ def insert_message(
     )
     session.add(message)
     session.flush()  # populate message.id
+    # Defensive dedup: `reactions` has a UNIQUE(message_id, emoji) constraint,
+    # and a duplicate emoji name here would abort the whole batch insert (a
+    # single scrape glitch shouldn't lose every message collected this run).
+    merged: dict[str, int] = {}
     for emoji, count in reactions or []:
+        merged[emoji] = merged.get(emoji, 0) + count
+    for emoji, count in merged.items():
         session.add(Reaction(message_id=message.id, emoji=emoji, count=count))
     return message
