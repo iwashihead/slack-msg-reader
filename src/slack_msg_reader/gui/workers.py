@@ -48,15 +48,36 @@ class CollectWorker(QThread):
     finished_ok = Signal(int)  # number of channels visited
     failed = Signal(str)
 
-    def __init__(self, kind: str = "all", name_contains: str | None = None, full_history: bool = False):
+    def __init__(
+        self,
+        kind: str = "all",
+        name_contains: str | None = None,
+        full_history: bool = False,
+        channel_ids: list[str] | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        collect_threads: bool = True,
+    ):
         super().__init__()
         self.kind = kind
         self.name_contains = name_contains
         self.full_history = full_history
+        self.channel_ids = channel_ids
+        self.since = since
+        self.until = until
+        self.collect_threads = collect_threads
 
     def run(self) -> None:
         try:
-            count = run_collect(kind=self.kind, name_contains=self.name_contains, full_history=self.full_history)
+            count = run_collect(
+                kind=self.kind,
+                name_contains=self.name_contains,
+                full_history=self.full_history,
+                channel_ids=self.channel_ids,
+                since=self.since,
+                until=self.until,
+                collect_threads=self.collect_threads,
+            )
         except SlackTabNotFoundError as e:
             self.failed.emit(str(e))
             return
