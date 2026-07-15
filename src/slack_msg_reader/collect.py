@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timedelta, timezone
 
 import click
 
@@ -10,6 +11,7 @@ from slack_msg_reader.scraper.channel_list import list_channels
 from slack_msg_reader.scraper.message_scraper import (
     collect_channel_messages,
     current_team_id,
+    datetime_to_ts,
     navigate_to_channel,
     ts_to_datetime,
 )
@@ -25,23 +27,44 @@ def run_inspect() -> tuple[str, list[dict]]:
         return page.url, list_channels(page)
 
 
-def run_collect(kind: str = "all", name_contains: str | None = None, full_history: bool = False) -> int:
+def run_collect(
+    kind: str = "all",
+    name_contains: str | None = None,
+    full_history: bool = False,
+    channel_ids: list[str] | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    collect_threads: bool = True,
+) -> int:
     """Runs one full collection pass. Returns the number of channels visited.
 
     Shared by the CLI `collect` command and the GUI's Collect tab -- progress
     is reported purely through the `collect` logger (attach a handler to see it),
     not return values, so both callers get identical behavior.
+
+    `channel_ids`, when given, restricts collection to exactly those channel
+    ids (as returned by list_channels/inspect), overriding kind/name_contains.
+    `since`/`until` bound the collected date range independently of what's
+    already stored -- useful to cap how far back a first-time collect walks
+    on a very active channel, or to backfill/export just one period.
     """
     init_db()
+    since_ts = datetime_to_ts(since) if since else None
+    until_ts = datetime_to_ts(until) if until else None
+
     with connect_slack_page() as page:
         team_id = current_team_id(page)
         channels = list_channels(page)
 
-        if kind != "all":
-            channels = [c for c in channels if c["kind"] == kind]
-        if name_contains:
-            needle = name_contains.lower()
-            channels = [c for c in channels if needle in c["name"].lower()]
+        if channel_ids:
+            wanted = set(channel_ids)
+            channels = [c for c in channels if c["id"] in wanted]
+        else:
+            if kind != "all":
+                channels = [c for c in channels if c["kind"] == kind]
+            if name_contains:
+                needle = name_contains.lower()
+                channels = [c for c in channels if needle in c["name"].lower()]
 
         log.info("Collecting from %d channel(s)...", len(channels))
 
@@ -59,7 +82,14 @@ def run_collect(kind: str = "all", name_contains: str | None = None, full_histor
                 log.exception("Failed to open channel %s, skipping", ch["id"])
                 continue
 
-            messages = collect_channel_messages(page, last_ts, seed_sender=seed_sender)
+            messages = collect_channel_messages(
+                page,
+                last_ts,
+                seed_sender=seed_sender,
+                since_ts=since_ts,
+                until_ts=until_ts,
+                collect_threads=collect_threads,
+            )
             log.info("  -> %d new message(s)", len(messages))
             if not messages:
                 continue
@@ -76,7 +106,7 @@ def run_collect(kind: str = "all", name_contains: str | None = None, full_histor
                         ts=m["ts"],
                         user_id=user_id,
                         text=m["text"],
-                        thread_ts=None,
+                        thread_ts=m["thread_ts"],
                         is_thread_parent=m["reply_count"] > 0,
                         reply_count=m["reply_count"],
                         posted_at=ts_to_datetime(m["ts"]),
@@ -133,10 +163,8 @@ def inspect_cmd():
 
     click.echo(f"Attached to: {url}")
     click.echo(f"Sidebar channels found: {len(channels)}")
-    for ch in channels[:10]:
+    for ch in channels:
         click.echo(f"  - [{ch['kind']}] {ch['id']}  {ch['name']}")
-    if len(channels) > 10:
-        click.echo(f"  ... and {len(channels) - 10} more")
     if not channels:
         click.echo(
             "No channels matched. Selectors in scraper/selectors.py likely need "
@@ -149,18 +177,46 @@ def inspect_cmd():
     "--kind",
     type=click.Choice(["channel", "dm", "all"]),
     default="all",
-    help="Restrict to channels, DMs/mpims, or all.",
+    help="Restrict to channels, DMs/mpims, or all. Ignored if --channel-id is given.",
 )
 @click.option("--name-contains", default=None, help="Only collect channels whose name contains this substring.")
+@click.option(
+    "--channel-id",
+    "channel_ids",
+    multiple=True,
+    help="Collect only this channel id (from `slack inspect`). Repeatable to select several.",
+)
 @click.option(
     "--full-history/--incremental",
     default=False,
     help="Ignore already-stored messages and re-walk each channel's full history.",
 )
-def collect(kind, name_contains, full_history):
+@click.option(
+    "--since", type=click.DateTime(formats=["%Y-%m-%d"]), default=None, help="Don't collect messages before this date (YYYY-MM-DD)."
+)
+@click.option(
+    "--until", type=click.DateTime(formats=["%Y-%m-%d"]), default=None, help="Don't collect messages after this date (YYYY-MM-DD, inclusive)."
+)
+@click.option(
+    "--threads/--no-threads",
+    default=True,
+    help="Also open and collect each message's thread replies (slower; disable for a quick pass).",
+)
+def collect(kind, name_contains, channel_ids, full_history, since, until, threads):
     """Scrape visible channels/DMs and store new messages in the SQLite DB."""
+    until_inclusive = (until + timedelta(days=1, microseconds=-1)).replace(tzinfo=timezone.utc) if until else None
+    since_utc = since.replace(tzinfo=timezone.utc) if since else None
+
     try:
-        run_collect(kind=kind, name_contains=name_contains, full_history=full_history)
+        run_collect(
+            kind=kind,
+            name_contains=name_contains,
+            full_history=full_history,
+            channel_ids=list(channel_ids) or None,
+            since=since_utc,
+            until=until_inclusive,
+            collect_threads=threads,
+        )
     except SlackTabNotFoundError as e:
         raise click.ClickException(str(e))
 

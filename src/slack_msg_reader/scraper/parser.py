@@ -1,10 +1,11 @@
 """
 Parses currently-rendered Slack message DOM nodes into plain dicts.
 
-Only top-level channel messages are parsed (not full thread contents) — for
-a message that started a thread we capture its reply_count but not the
-individual replies. Expanding threads is a natural follow-up, not needed for
-the MVP archive.
+Works for both the main channel view and an open thread panel -- Slack
+reuses the exact same message markup in both places (confirmed live), so
+the only difference is scoping the query to the thread panel's subtree via
+`root_selector` (see message_scraper.collect_thread_replies) instead of the
+whole document, since both can have message containers on screen at once.
 
 The message's own `data-msg-ts` attribute (present directly on the
 MESSAGE_CONTAINER element) gives the exact Slack `ts` value with no
@@ -37,8 +38,9 @@ from slack_msg_reader.scraper.selectors import (
 _DIGITS_RE = re.compile(r"(\d+)")
 
 _PARSE_JS = """
-([containerSel, tsAttr, senderSel, textSel, replyBarSel, reactionSel, reactionEmojiImgSel, reactionEmojiAttr, reactionCountSel]) => {
-    const nodes = Array.from(document.querySelectorAll(containerSel));
+([containerSel, tsAttr, senderSel, textSel, replyBarSel, reactionSel, reactionEmojiImgSel, reactionEmojiAttr, reactionCountSel, rootSel]) => {
+    const root = rootSel ? document.querySelector(rootSel) : document;
+    const nodes = root ? Array.from(root.querySelectorAll(containerSel)) : [];
     return nodes.map((el) => {
         const senderEl = el.querySelector(senderSel);
         const textEl = el.querySelector(textSel);
@@ -81,12 +83,17 @@ def _extract_reactions(raw_reactions: list[dict]) -> list[tuple[str, int]]:
     return out
 
 
-def parse_visible_messages(page: Page) -> list[dict]:
+def parse_visible_messages(page: Page, root_selector: str | None = None) -> list[dict]:
     """Returns parsed dicts for every message container currently in the DOM.
 
     Fields: sender (display name str | None -- None means "same as the
     previous message", see module docstring), ts, text, reply_count,
     reactions (list[(emoji, count)]).
+
+    `root_selector`, when given, scopes the search to that subtree (e.g. the
+    thread flexpane) instead of the whole document -- needed because a
+    thread panel and the main channel view can have their own
+    MESSAGE_CONTAINER elements on screen at the same time.
     """
     raw = page.evaluate(
         _PARSE_JS,
@@ -100,6 +107,7 @@ def parse_visible_messages(page: Page) -> list[dict]:
             MESSAGE_REACTION_EMOJI_IMG,
             MESSAGE_REACTION_EMOJI_ATTR,
             MESSAGE_REACTION_COUNT,
+            root_selector,
         ],
     )
     parsed = []
