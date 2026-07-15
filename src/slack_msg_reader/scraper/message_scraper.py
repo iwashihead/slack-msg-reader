@@ -15,7 +15,7 @@ from slack_msg_reader.scraper.selectors import (
 
 log = logging.getLogger(__name__)
 
-_TEAM_ID_RE = re.compile(r"/client/([A-Za-z0-9]+)/")
+_TEAM_ID_RE = re.compile(r"/client/([A-Za-z0-9]+)(?:[/?#]|$)")
 
 
 def current_team_id(page: Page) -> str:
