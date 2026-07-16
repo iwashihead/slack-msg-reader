@@ -4,6 +4,33 @@ from sqlalchemy.orm import Session
 from slack_msg_reader.db.models import Channel, Message, Reaction, User
 
 
+def resolve_user_id(session: Session, query: str) -> str | None:
+    """Best-effort resolution of a `--user` value to a real Slack user id:
+
+    1. Already a known User.id (exact match) -- e.g. the user pasted their
+       own previously-seen id, or a raw id copied from Slack's own UI.
+    2. A known display_name (exact match) -- the common case once someone
+       has been collected at least once before.
+    3. Otherwise, if it looks like a raw Slack id (Slack ids are short,
+       all-caps alphanumeric strings -- "U0123ABC", "USLACKBOT", etc.),
+       accept it as-is even if we've never seen it, so search-based
+       collection also works for someone not yet in the archive.
+
+    Returns None if it doesn't match anything and doesn't look like an id.
+    """
+    if session.get(User, query) is not None:
+        return query
+
+    row = session.execute(select(User.id).where(User.display_name == query)).first()
+    if row:
+        return row[0]
+
+    if query.isupper() and query.isalnum() and 6 <= len(query) <= 21:
+        return query
+
+    return None
+
+
 def upsert_channel(session: Session, channel_id: str, name: str, kind: str) -> Channel:
     channel = session.get(Channel, channel_id)
     if channel is None:
