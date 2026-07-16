@@ -10,7 +10,7 @@ from PySide6.QtCore import QThread, Signal
 
 from slack_msg_reader import export as export_module
 from slack_msg_reader import report as report_module
-from slack_msg_reader.collect import run_collect, run_inspect
+from slack_msg_reader.collect import run_collect, run_collect_for_user, run_inspect
 from slack_msg_reader.scraper import chrome_launcher
 from slack_msg_reader.scraper.browser import SlackTabNotFoundError
 
@@ -79,6 +79,32 @@ class CollectWorker(QThread):
                 collect_threads=self.collect_threads,
             )
         except SlackTabNotFoundError as e:
+            self.failed.emit(str(e))
+            return
+        except Exception as e:  # noqa: BLE001
+            self.failed.emit(f"Unexpected error: {e}")
+            return
+        self.finished_ok.emit(count)
+
+
+class UserCollectWorker(QThread):
+    """Wraps run_collect_for_user -- the from:<@user> search-based collect
+    mode, as an alternative to CollectWorker's per-channel scan."""
+
+    finished_ok = Signal(int)  # number of messages stored
+    failed = Signal(str)
+
+    def __init__(self, user: str):
+        super().__init__()
+        self.user = user
+
+    def run(self) -> None:
+        try:
+            count = run_collect_for_user(self.user)
+        except SlackTabNotFoundError as e:
+            self.failed.emit(str(e))
+            return
+        except ValueError as e:
             self.failed.emit(str(e))
             return
         except Exception as e:  # noqa: BLE001
