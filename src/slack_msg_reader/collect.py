@@ -74,7 +74,8 @@ def run_collect(
             with session_scope() as session:
                 repository.upsert_channel(session, ch["id"], ch["name"], ch["kind"])
                 last_ts = None if full_history else repository.latest_ts_for_channel(session, ch["id"])
-                seed_sender = None if full_history else repository.latest_message_sender_name(session, ch["id"])
+                seed = None if full_history else repository.latest_message_sender(session, ch["id"])
+                seed_sender, seed_sender_id = seed if seed else (None, None)
 
             try:
                 navigate_to_channel(page, team_id, ch["id"])
@@ -86,6 +87,7 @@ def run_collect(
                 page,
                 last_ts,
                 seed_sender=seed_sender,
+                seed_sender_id=seed_sender_id,
                 since_ts=since_ts,
                 until_ts=until_ts,
                 collect_threads=collect_threads,
@@ -98,7 +100,11 @@ def run_collect(
                 for m in messages:
                     if repository.message_exists(session, ch["id"], m["ts"]):
                         continue
-                    user_id = slugify_user(m["sender"])
+                    # Real Slack user id when we have it (works even for grouped
+                    # messages via forward-fill, and for bots like Slackbot) --
+                    # falls back to a name-derived slug only if truly missing,
+                    # so identity doesn't shatter across a display-name change.
+                    user_id = m["sender_id"] or slugify_user(m["sender"])
                     repository.upsert_user(session, user_id, m["sender"])
                     repository.insert_message(
                         session,

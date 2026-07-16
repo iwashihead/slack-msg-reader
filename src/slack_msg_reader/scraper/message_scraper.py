@@ -69,6 +69,7 @@ def collect_thread_replies(
     page: Page,
     parent_ts: str,
     seed_sender: str | None = None,
+    seed_sender_id: str | None = None,
     max_scrolls: int = MAX_SCROLLS_PER_CHANNEL,
 ) -> list[dict]:
     """Opens the thread for the message at parent_ts, scrolls to load every
@@ -126,12 +127,13 @@ def collect_thread_replies(
         pass
 
     ordered = sorted(collected.values(), key=lambda m: m["ts"])
-    last_sender = seed_sender
+    last_sender, last_sender_id = seed_sender, seed_sender_id
     for msg in ordered:
         if msg["sender"] is None:
             msg["sender"] = last_sender or "unknown"
+            msg["sender_id"] = last_sender_id
         else:
-            last_sender = msg["sender"]
+            last_sender, last_sender_id = msg["sender"], msg["sender_id"]
         msg["thread_ts"] = parent_ts
         msg["reply_count"] = 0  # Slack threads don't nest further
 
@@ -142,6 +144,7 @@ def collect_channel_messages(
     page: Page,
     last_known_ts: str | None,
     seed_sender: str | None = None,
+    seed_sender_id: str | None = None,
     since_ts: str | None = None,
     until_ts: str | None = None,
     collect_threads: bool = True,
@@ -162,9 +165,9 @@ def collect_channel_messages(
       reduce how far up we need to scroll, since Slack always renders a
       channel starting from its newest message.
 
-    Returns messages sorted oldest-first, deduplicated by ts, with `sender`
-    forward-filled (Slack omits the sender element on grouped/consecutive
-    messages -- see parser.py) and `thread_ts` set (None for top-level
+    Returns messages sorted oldest-first, deduplicated by ts, with `sender`/
+    `sender_id` forward-filled (Slack omits the sender element on grouped/
+    consecutive messages -- see parser.py) and `thread_ts` set (None for top-level
     messages, the parent's ts for thread replies).
     """
     floor_ts = max(t for t in (last_known_ts, since_ts) if t is not None) if (last_known_ts or since_ts) else None
@@ -190,7 +193,9 @@ def collect_channel_messages(
                 collected[msg["ts"]] = msg
 
             if collect_threads and is_new and msg["reply_count"] > 0 and msg["ts"] not in thread_replies:
-                replies = collect_thread_replies(page, msg["ts"], seed_sender=msg["sender"])
+                replies = collect_thread_replies(
+                    page, msg["ts"], seed_sender=msg["sender"], seed_sender_id=msg["sender_id"]
+                )
                 if replies:
                     thread_replies[msg["ts"]] = replies
 
@@ -211,12 +216,13 @@ def collect_channel_messages(
         log.warning("Hit MAX_SCROLLS_PER_CHANNEL safety cap; history may be incomplete")
 
     ordered = sorted(collected.values(), key=lambda m: m["ts"])
-    last_sender = seed_sender
+    last_sender, last_sender_id = seed_sender, seed_sender_id
     for msg in ordered:
         if msg["sender"] is None:
             msg["sender"] = last_sender or "unknown"
+            msg["sender_id"] = last_sender_id
         else:
-            last_sender = msg["sender"]
+            last_sender, last_sender_id = msg["sender"], msg["sender_id"]
         msg["thread_ts"] = None
 
     # Merge, keyed by ts: thread replies win on collision. Slack sometimes

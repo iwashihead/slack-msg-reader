@@ -14,9 +14,15 @@ regex/href parsing needed -- confirmed against a live session.
 Slack visually groups consecutive messages from the same sender: only the
 first message in such a run renders a sender element at all (confirmed
 against a live session -- grouped messages carry no sender info anywhere in
-their DOM, not even in an aria-hidden helper). `sender` is therefore `None`
-for those; the caller (message_scraper.collect_channel_messages) is
-responsible for forward-filling it from the preceding message.
+their DOM, not even in an aria-hidden helper). `sender`/`sender_id` are
+therefore `None` for those; the caller (message_scraper.collect_channel_messages)
+is responsible for forward-filling them from the preceding message.
+
+The sender element also carries the real, stable Slack user id (e.g.
+"U0123ABC", or "USLACKBOT" for Slackbot -- confirmed present even for bot
+senders) in a `data-message-sender` attribute. This is used as `sender_id`
+and is what identity should be keyed on, not the display-name text alone,
+which can change or collide between people.
 """
 
 import re
@@ -30,6 +36,7 @@ from slack_msg_reader.scraper.selectors import (
     MESSAGE_REACTION_EMOJI_ATTR,
     MESSAGE_REACTION_EMOJI_IMG,
     MESSAGE_SENDER,
+    MESSAGE_SENDER_ID_ATTR,
     MESSAGE_TEXT,
     MESSAGE_THREAD_REPLY_BAR,
     MESSAGE_TS_ATTR,
@@ -38,7 +45,7 @@ from slack_msg_reader.scraper.selectors import (
 _DIGITS_RE = re.compile(r"(\d+)")
 
 _PARSE_JS = """
-([containerSel, tsAttr, senderSel, textSel, replyBarSel, reactionSel, reactionEmojiImgSel, reactionEmojiAttr, reactionCountSel, rootSel]) => {
+([containerSel, tsAttr, senderSel, senderIdAttr, textSel, replyBarSel, reactionSel, reactionEmojiImgSel, reactionEmojiAttr, reactionCountSel, rootSel]) => {
     const root = rootSel ? document.querySelector(rootSel) : document;
     const nodes = root ? Array.from(root.querySelectorAll(containerSel)) : [];
     return nodes.map((el) => {
@@ -63,6 +70,7 @@ _PARSE_JS = """
         return {
             ts: el.getAttribute(tsAttr),
             sender: senderEl ? senderEl.textContent.trim() : null,
+            sender_id: senderEl ? senderEl.getAttribute(senderIdAttr) : null,
             text: textEl ? textEl.textContent.trim() : '',
             reply_bar_text: replyBarEl ? replyBarEl.textContent.trim() : null,
             reactions,
@@ -101,9 +109,9 @@ def _extract_reactions(raw_reactions: list[dict]) -> list[tuple[str, int]]:
 def parse_visible_messages(page: Page, root_selector: str | None = None) -> list[dict]:
     """Returns parsed dicts for every message container currently in the DOM.
 
-    Fields: sender (display name str | None -- None means "same as the
-    previous message", see module docstring), ts, text, reply_count,
-    reactions (list[(emoji, count)]).
+    Fields: sender (display name str | None), sender_id (real Slack user id
+    str | None) -- both None means "same as the previous message", see
+    module docstring), ts, text, reply_count, reactions (list[(emoji, count)]).
 
     `root_selector`, when given, scopes the search to that subtree (e.g. the
     thread flexpane) instead of the whole document -- needed because a
@@ -116,6 +124,7 @@ def parse_visible_messages(page: Page, root_selector: str | None = None) -> list
             MESSAGE_CONTAINER,
             MESSAGE_TS_ATTR,
             MESSAGE_SENDER,
+            MESSAGE_SENDER_ID_ATTR,
             MESSAGE_TEXT,
             MESSAGE_THREAD_REPLY_BAR,
             MESSAGE_REACTION,
@@ -133,6 +142,7 @@ def parse_visible_messages(page: Page, root_selector: str | None = None) -> list
         parsed.append(
             {
                 "sender": item.get("sender") or None,
+                "sender_id": item.get("sender_id") or None,
                 "ts": ts,
                 "text": item.get("text") or "",
                 "reply_count": _extract_reply_count(item.get("reply_bar_text")),

@@ -23,6 +23,7 @@ MESSAGE_LIST_SCROLL_CONTAINER = '[data-qa="slack_kit_scrollbar"]'
 MESSAGE_CONTAINER = '[data-qa="virtual-list-item"] [data-qa="message_container"]'
 MESSAGE_TS_ATTR = "data-msg-ts"  # present directly on MESSAGE_CONTAINER
 MESSAGE_SENDER = '[data-qa="message_sender_name"]'
+MESSAGE_SENDER_ID_ATTR = "data-message-sender"  # real Slack user id (e.g. "U0123ABC", "USLACKBOT") on MESSAGE_SENDER
 MESSAGE_TEXT = '[data-qa="message-text"]'
 MESSAGE_REACTION = 'button[data-qa="reactji"]'
 MESSAGE_REACTION_EMOJI_IMG = 'img[data-qa="emoji"]'
