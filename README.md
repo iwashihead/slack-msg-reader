@@ -4,10 +4,14 @@ Slackの「Bot/APIアプリ」を作らずに、自分が既にアクセス権�
 手動でログイン済みのブラウザにアタッチして収集し、SQLiteに蓄積するツールです。
 収集後はSQLite上のデータに対して分析コマンドを実行できます。
 
+**デスクトップGUIアプリ（Mac/Windows両対応）が主なインターフェースです。**
+CLIコマンドも同じ機能を全てカバーしており、自動化・スクリプト用途で使えます
+（GUIの各タブは内部的にこれらのCLIコマンドと同じ関数を呼んでいます）。
+
 ## 前提・注意事項 (必読)
 
 - **認証はスクリプトでは行いません。** 事前にあなた自身の手でSlackにログインしてください。このツールはそのブラウザセッションに「後から乗る」だけです。
-- SlackはWebクライアントのDOM構造を予告なく変更します。`src/slack_msg_reader/scraper/selectors.py` のセレクタは執筆時点のベストエフォートです。動かない場合はまず `inspect` コマンドで確認し、DevToolsで実際のDOMを見てセレクタを調整してください。
+- SlackはWebクライアントのDOM構造を予告なく変更します。`src/slack_msg_reader/scraper/selectors.py` のセレクタは執筆時点のベストエフォートです。動かない場合はまず `inspect`（GUIなら「Inspect」ボタン）で確認し、DevToolsで実際のDOMを見てセレクタを調整してください。
 - 過度に高速なスクロール/連続実行はアカウントに負荷をかけたり不審な挙動として扱われる可能性があります。常識的な頻度（例:1日数回のバッチ実行）での利用を想定しています。
 
 ## セットアップ
@@ -16,15 +20,87 @@ Slackの「Bot/APIアプリ」を作らずに、自分が既にアクセス権�
 cd ~/slack-msg-reader
 python3.12 -m venv .venv   # 3.10+必須 (型ヒントに `X | None` 構文を使用)
 source .venv/bin/activate
-pip install -e ".[analysis]"
-playwright install chromium   # ブラウザ自体は使わないが、Playwright本体の動作に必要
+pip install -e ".[gui]"        # GUIアプリに必要な一式 (pandas + PySide6) を含む
+playwright install chromium    # ブラウザ自体は使わないが、Playwright本体の動作に必要
 ```
 
-## 使い方
+CLIの `analyze` コマンドなどだけで十分でGUIを使わない場合は、代わりに
+`pip install -e ".[analysis]"` でも動きます（`pandas` のみで `PySide6` は入りません）。
+
+## 使い方 (GUIアプリ、推奨)
+
+```bash
+slack-gui
+# もしくは
+python -m slack_msg_reader.gui.app
+```
+
+「Chrome & Collect」「Export」「Report」「Analyze」の4タブで構成されており、後述のCLIコマンドと
+同じ機能をすべてカバーしています。Playwright/CDPを使う処理（Chrome起動・Inspect・Collect）は
+バックグラウンドスレッドで実行され、ログはGUI内にリアルタイム表示されます。
+
+1. **Chrome & Collectタブ**
+   - 「1. Chrome」ボタンで収集専用のChromeを起動します（初回だけ開いたウィンドウで手動でSlackに
+     ログインしてください。2回目以降はプロファイルが永続化されているため再ログイン不要です）。
+   - 「2. Inspect」でサイドバーのチャンネル一覧を取得します。一覧はチャンネルごとに
+     チェックボックスがあり、特定のチャンネルだけにチェックを入れて「3. Collect」すれば
+     それらだけを収集できます（Select all / Select noneで一括切り替え。何もチェックしなければ
+     Kind/Name containsによる絞り込みが使われます）。
+   - 「3. Collect」にはSince/Until（収集する期間の指定）、「スレッド返信も収集する」
+     チェックボックス、「全履歴を再取得する（差分ではなく）」チェックボックスがあります。
+   - 「Collect one person via search」欄では、表示名やユーザーIDを入力するだけで、Slack自身の
+     検索（`from:<@ユーザーID>`、新しい順）を使った特定の人の発言だけの高速収集を実行できます
+     （実験的な機能で、通常収集と違いリアクション・スレッド情報は取得されません）。
+2. **Exportタブ**: 外部LLM（Claude等）に読ませるためのAI分析用Markdownをチャンネル/ユーザー/
+   期間で絞り込んで出力します。
+3. **Reportタブ**: 特定の人を中心にした、会話相手の発言も含む文脈込みのレポートと、AIチャット
+   ボットに投げるための分析用プロンプトを生成します。ユーザー選択（既知のユーザー一覧から選択可）・
+   「今週」ワンクリック指定・生成したプロンプトのクリップボードコピーボタンがあります。
+4. **Analyzeタブ**: チャンネル別/ユーザー別/時間帯別/曜日別の投稿量、よく使われるリアクションなどの
+   集計を表示します。
+
+各機能のオプションの詳しい意味（`--since`/`--until` の挙動、検索ベース収集の制約など）は、
+後述の「CLIで直接操作する場合」を参照してください。GUIの各項目は同じ概念をラップしているだけです。
+
+### 配布用アプリ（.app / .exe）のビルド
+
+```bash
+pip install -e ".[build]"
+pyinstaller packaging/SlackMsgReader.spec --distpath packaging/dist --workpath packaging/build
+```
+
+- **Mac**: `packaging/dist/SlackMsgReader.app` が生成されます。実際にビルドし、
+  Chrome起動・Inspect・Collect・Export・Analyzeの全機能が実データに対して動作することを
+  確認済みです。
+- **Windows**: 同じ `.spec` ファイルでビルドできます（`BUNDLE`はmacOS専用ステップのため
+  Windows実行時は自動的にスキップされます）。`.github/workflows/windows-gui-smoke-test.yml`
+  により、GitHub Actionsの `windows-latest`（実機のWindows環境）上でビルド・起動・
+  Chrome連携までを継続的に検証しています。
+
+### CIでのビルド済み配布物のダウンロード
+
+GitHub Actionsの `.github/workflows/build-artifacts.yml` を手動実行（Actionsタブ →
+「Build distributable artifacts」→ Run workflow）すると、以下がワークフローの
+Artifacts として生成されます。バージョンタグ（`v*`）をpushした場合も自動実行されます。
+
+- `SlackMsgReader-macOS`: `SlackMsgReader.dmg`（Applicationsフォルダへドラッグインストール可能）
+- `SlackMsgReader-Windows`: `SlackMsgReaderSetup.exe`（Inno Setup製インストーラー）
+
+Actionsの実行結果ページの「Artifacts」欄からダウンロードできます（GitHubの仕様上、
+Artifactsは既定で90日間保持されます）。
+
+パッケージ版（.app / .exe）実行時のデータ（SQLite DB等）は `~/.slack-msg-reader/data/` に
+保存されます（ソースから `slack` CLIで動かす場合は従来通り `data/` プロジェクト直下）。
+パッケージ版はアプリバンドル自身の場所に書き込もうとすると、マウントした `.dmg` から
+直接起動した場合や権限次第で失敗するため、ホームディレクトリ配下に固定しています。
+
+## 使い方 (CLIで直接操作する場合)
+
+スクリプトからの自動化や、GUIを使わずに操作したい場合はCLIも使えます。
 
 ### 1. 収集用Chromeを起動し、Slackに手動ログイン
 
-`pip install -e .` すると `slack` コマンドが使えるようになります（venv を `activate` した状態で実行してください）。
+セットアップ済みなら `slack` コマンドが使えます（venv を `activate` した状態で実行してください）。
 
 ```bash
 slack chrome
@@ -155,61 +231,6 @@ slack report --user haru --this-week --output-dir ./weekly_report
 出力先はデフォルトで `data/reports/` です。分割の挙動（`--max-chars` / `--max-files`）は
 `slack export` と同じロジックを共有しています。
 
-### 7. GUIアプリ
-
-CLIの代わりにデスクトップGUI（PySide6/Qt製、Mac/Windows両対応）からも操作できます。
-「Chrome & Collect」「Export」「Report」「Analyze」の4タブで、これまでのCLIコマンドと
-同じ機能をすべてカバーしています。Playwright/CDPを使う処理（Chrome起動・Inspect・Collect）は
-バックグラウンドスレッドで実行され、ログはGUI内にリアルタイム表示されます。
-Reportタブにはユーザー選択（既知のユーザー一覧から選択可）・「今週」ワンクリック指定・
-生成したプロンプトのクリップボードコピーボタンがあります。
-Chrome & Collectタブの「Inspect」欄はチャンネルごとにチェックボックスがあり、特定の
-チャンネルだけにチェックを入れて「Collect」すればそれらだけを収集できます（Select all /
-Select noneで一括切り替え）。何もチェックしなければ従来通りKind/Name containsの絞り込みが
-使われます。「Collect」欄にはSince/Until（期間指定）と「スレッド返信も収集する」チェックボックスも
-あります。さらに「Collect one person via search」欄では、表示名やユーザーIDを入力するだけで
-`slack collect --user` と同じ検索ベースの収集（高速だが実験的、リアクション/スレッド情報なし）を
-実行できます。
-
-```bash
-pip install -e ".[gui]"
-slack-gui
-# もしくは
-python -m slack_msg_reader.gui.app
-```
-
-#### 配布用アプリ（.app / .exe）のビルド
-
-```bash
-pip install -e ".[build]"
-pyinstaller packaging/SlackMsgReader.spec --distpath packaging/dist --workpath packaging/build
-```
-
-- **Mac**: `packaging/dist/SlackMsgReader.app` が生成されます。実際にビルドし、
-  Chrome起動・Inspect・Collect・Export・Analyzeの全機能が実データに対して動作することを
-  確認済みです。
-- **Windows**: 同じ `.spec` ファイルでビルドできます（`BUNDLE`はmacOS専用ステップのため
-  Windows実行時は自動的にスキップされます）。`.github/workflows/windows-gui-smoke-test.yml`
-  により、GitHub Actionsの `windows-latest`（実機のWindows環境）上でビルド・起動・
-  Chrome連携までを継続的に検証しています。
-
-#### CIでのビルド済み配布物のダウンロード
-
-GitHub Actionsの `.github/workflows/build-artifacts.yml` を手動実行（Actionsタブ →
-「Build distributable artifacts」→ Run workflow）すると、以下がワークフローの
-Artifacts として生成されます。バージョンタグ（`v*`）をpushした場合も自動実行されます。
-
-- `SlackMsgReader-macOS`: `SlackMsgReader.dmg`（Applicationsフォルダへドラッグインストール可能）
-- `SlackMsgReader-Windows`: `SlackMsgReaderSetup.exe`（Inno Setup製インストーラー）
-
-Actionsの実行結果ページの「Artifacts」欄からダウンロードできます（GitHubの仕様上、
-Artifactsは既定で90日間保持されます）。
-
-パッケージ版（.app / .exe）実行時のデータ（SQLite DB等）は `~/.slack-msg-reader/data/` に
-保存されます（ソースから `slack` CLIで動かす場合は従来通り `data/` プロジェクト直下）。
-パッケージ版はアプリバンドル自身の場所に書き込もうとすると、マウントした `.dmg` から
-直接起動した場合や権限次第で失敗するため、ホームディレクトリ配下に固定しています。
-
 ## セキュリティ
 
 依存パッケージは [pip-audit](https://github.com/pypa/pip-audit) で監査しています（PyPI Advisory DB / OSV の
@@ -242,6 +263,10 @@ pip-audit --local --desc -s osv
 - Slackは同じ送信者の連続投稿をグルーピングして送信者名を省略表示します。DOM上も省略された投稿には送信者情報が一切残らないため、直前に送信者名が確認できたメッセージから forward-fill（前方補完）しています。まれに、差分収集の境界（前回収集の最後のメッセージと今回の最初のメッセージ）でDB側の直前送信者を参照できないと `unknown` になることがあります。
 - サイドバーのチャンネル列挙（`inspect`/`collect`）は、少人数の小規模ワークスペースで動作確認していますが、数百チャンネル規模の実ワークスペースでの網羅性はこちら側では検証できていません。検出数が実際の所属数と合わない場合はお知らせください。
 
+## ライセンス
+
+[MIT License](LICENSE) です。
+
 ## ディレクトリ構成
 
 ```
@@ -263,6 +288,7 @@ src/slack_msg_reader/
     channel_list.py       サイドバーからチャンネル一覧を取得
     parser.py              メッセージDOMのパース
     message_scraper.py    スクロール制御・差分収集ロジック
+    search.py              from:<@user>検索ベースの収集ロジック
   analysis/
     queries.py            分析用クエリ (pandas DataFrame)
     cli.py                  分析用CLI
