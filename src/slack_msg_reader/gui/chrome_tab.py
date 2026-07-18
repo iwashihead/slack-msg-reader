@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from slack_msg_reader.gui.log_handler import QtLogHandler
-from slack_msg_reader.gui.workers import ChromeWorker, CollectWorker, InspectWorker
+from slack_msg_reader.gui.workers import ChromeWorker, CollectWorker, InspectWorker, UserCollectWorker
 
 _CHECK_COL, _KIND_COL, _ID_COL, _NAME_COL = range(4)
 
@@ -37,6 +37,7 @@ class ChromeCollectTab(QWidget):
         self._chrome_worker: ChromeWorker | None = None
         self._inspect_worker: InspectWorker | None = None
         self._collect_worker: CollectWorker | None = None
+        self._user_collect_worker: UserCollectWorker | None = None
 
         layout = QVBoxLayout(self)
 
@@ -110,6 +111,18 @@ class ChromeCollectTab(QWidget):
         collect_vbox.addLayout(collect_form)
         layout.addWidget(collect_box)
 
+        user_collect_box = QGroupBox(
+            "4. Collect one person via search (fast, but unstable -- no reactions/thread info)"
+        )
+        user_collect_form = QFormLayout(user_collect_box)
+        self.user_collect_edit = QLineEdit()
+        self.user_collect_edit.setPlaceholderText("display name, known user id, or raw Slack id (e.g. U0123ABC)")
+        user_collect_form.addRow("Person:", self.user_collect_edit)
+        self.user_collect_button = QPushButton("Collect this person's messages")
+        self.user_collect_button.clicked.connect(self._start_user_collect)
+        user_collect_form.addRow(self.user_collect_button)
+        layout.addWidget(user_collect_box)
+
         log_box = QGroupBox("Log")
         log_layout = QVBoxLayout(log_box)
         self.log_view = QPlainTextEdit()
@@ -121,7 +134,7 @@ class ChromeCollectTab(QWidget):
         self.log_view.appendPlainText(line)
 
     def _set_busy(self, busy: bool) -> None:
-        for btn in (self.chrome_button, self.inspect_button, self.collect_button):
+        for btn in (self.chrome_button, self.inspect_button, self.collect_button, self.user_collect_button):
             btn.setEnabled(not busy)
 
     # --- Chrome ---
@@ -225,3 +238,24 @@ class ChromeCollectTab(QWidget):
 
     def _on_collect_failed(self, message: str) -> None:
         self._append_log(f"Collect failed: {message}")
+
+    # --- Collect one person (search-based) ---
+    def _start_user_collect(self) -> None:
+        user = self.user_collect_edit.text().strip()
+        if not user:
+            self._append_log("Enter a display name or Slack user id first.")
+            return
+
+        self._set_busy(True)
+        self._append_log(f"Searching for {user}'s messages...")
+        self._user_collect_worker = UserCollectWorker(user)
+        self._user_collect_worker.finished_ok.connect(self._on_user_collect_finished)
+        self._user_collect_worker.failed.connect(self._on_user_collect_failed)
+        self._user_collect_worker.finished.connect(lambda: self._set_busy(False))
+        self._user_collect_worker.start()
+
+    def _on_user_collect_finished(self, stored_count: int) -> None:
+        self._append_log(f"Done. Stored {stored_count} message(s).")
+
+    def _on_user_collect_failed(self, message: str) -> None:
+        self._append_log(f"Collect (person search) failed: {message}")

@@ -31,6 +31,38 @@ def navigate_to_channel(page: Page, team_id: str, channel_id: str) -> None:
     page.wait_for_timeout(500)
 
 
+def ensure_not_on_search_page(page: Page) -> None:
+    """The sidebar's channel list isn't even in the DOM while the tab is
+    showing Slack's own /search results view (confirmed live: `slack collect
+    --user` leaves the tab there when it's done, and a plain `slack collect`
+    run right after finds 0 channels).
+
+    Navigating to the bare team root (`/client/TEAM_ID`) does *not* fix this
+    -- confirmed live that Slack's own client-side router just redirects
+    straight back to /search, since it persists "last viewed" per team and
+    search was it. `page.go_back()` doesn't help either, for the same
+    reason. What does work: pressing Escape (dismisses the search
+    autocomplete overlay, which otherwise can intercept the next click --
+    see search.py's docstring for the same failure mode) and then clicking
+    the left rail's Home button, which Slack treats as a real navigation
+    away from search rather than a route it silently overrides.
+    """
+    if "/search" not in page.url:
+        return
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(500)
+    home_btn = page.query_selector('[data-qa="tab_rail_home_button"]')
+    if home_btn is None:
+        log.warning("Stuck on /search and couldn't find the home rail button to escape it")
+        return
+    try:
+        home_btn.click(timeout=10000)
+    except Exception:
+        log.warning("Clicking the home rail button to leave /search failed", exc_info=True)
+        return
+    page.wait_for_timeout(1500)
+
+
 def _scroll_container_height(page: Page, scope_selector: str | None = None) -> int:
     return page.evaluate(
         """([containerSel, scopeSel]) => {

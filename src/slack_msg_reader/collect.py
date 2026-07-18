@@ -12,9 +12,11 @@ from slack_msg_reader.scraper.message_scraper import (
     collect_channel_messages,
     current_team_id,
     datetime_to_ts,
+    ensure_not_on_search_page,
     navigate_to_channel,
     ts_to_datetime,
 )
+from slack_msg_reader.scraper.search import search_messages_from_user
 from slack_msg_reader.util import slugify_user
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -24,6 +26,7 @@ log = logging.getLogger("collect")
 def run_inspect() -> tuple[str, list[dict]]:
     """Attaches to the Slack tab and returns (page_url, channels). Reusable by CLI and GUI."""
     with connect_slack_page() as page:
+        ensure_not_on_search_page(page)
         return page.url, list_channels(page)
 
 
@@ -53,6 +56,7 @@ def run_collect(
     until_ts = datetime_to_ts(until) if until else None
 
     with connect_slack_page() as page:
+        ensure_not_on_search_page(page)
         team_id = current_team_id(page)
         channels = list_channels(page)
 
@@ -122,6 +126,66 @@ def run_collect(
         return len(channels)
 
 
+def run_collect_for_user(user_query: str) -> int:
+    """Collects one person's messages across the whole workspace via Slack's
+    own `from:<@id>` search (newest-first) instead of scrolling channels --
+    much faster when only one person's messages matter, at the cost of
+    fidelity: no reactions and no thread-reply awareness (search result
+    snippets don't carry that), unlike run_collect().
+
+    `user_query` may be an already-known display name, an already-known
+    user id, or a raw Slack id for someone not yet in the archive (see
+    repository.resolve_user_id). Returns the number of messages stored.
+
+    Channel `kind` for any channel discovered only through search (never
+    seen via `inspect`/`collect` before) is recorded as "channel" -- search
+    result snippets don't distinguish public/private/DM the way the
+    sidebar does.
+    """
+    init_db()
+
+    with session_scope() as session:
+        user_id = repository.resolve_user_id(session, user_query)
+    if user_id is None:
+        raise ValueError(
+            f"Could not resolve '{user_query}' to a Slack user: it doesn't match a display name or "
+            "user id already in the archive, and doesn't look like a raw Slack id (e.g. U0123ABC). "
+            "Run `slack collect` at least once first, or pass the exact Slack user id."
+        )
+
+    with connect_slack_page() as page:
+        ensure_not_on_search_page(page)
+        known_channels = {c["id"]: c["kind"] for c in list_channels(page)}
+        results = search_messages_from_user(page, user_id)
+
+    log.info("Search returned %d message(s) for user id=%s", len(results), user_id)
+    if not results:
+        return 0
+
+    stored = 0
+    with session_scope() as session:
+        for r in results:
+            repository.upsert_channel(session, r["channel_id"], r["channel_name"], known_channels.get(r["channel_id"], "channel"))
+            if repository.message_exists(session, r["channel_id"], r["ts"]):
+                continue
+            repository.upsert_user(session, user_id, r["sender"])
+            repository.insert_message(
+                session,
+                channel_id=r["channel_id"],
+                ts=r["ts"],
+                user_id=user_id,
+                text=r["text"],
+                thread_ts=None,
+                is_thread_parent=False,
+                reply_count=0,
+                posted_at=ts_to_datetime(r["ts"]),
+                reactions=[],
+            )
+            stored += 1
+
+    return stored
+
+
 @click.group()
 def cli():
     """Slack message archiver: attaches to an already-logged-in browser tab,
@@ -183,7 +247,7 @@ def inspect_cmd():
     "--kind",
     type=click.Choice(["channel", "dm", "all"]),
     default="all",
-    help="Restrict to channels, DMs/mpims, or all. Ignored if --channel-id is given.",
+    help="Restrict to channels, DMs/mpims, or all. Ignored if --channel-id or --user is given.",
 )
 @click.option("--name-contains", default=None, help="Only collect channels whose name contains this substring.")
 @click.option(
@@ -193,9 +257,16 @@ def inspect_cmd():
     help="Collect only this channel id (from `slack inspect`). Repeatable to select several.",
 )
 @click.option(
+    "--user",
+    default=None,
+    help="Collect only this person's messages workspace-wide, via Slack search (from:<@id>, newest-first) "
+    "instead of scanning channels. Much faster, but no reactions/thread info. Accepts a known display "
+    "name, a known user id, or a raw Slack id (e.g. U0123ABC) for someone new. Overrides all other filters.",
+)
+@click.option(
     "--full-history/--incremental",
     default=False,
-    help="Ignore already-stored messages and re-walk each channel's full history.",
+    help="Ignore already-stored messages and re-walk each channel's full history. Ignored with --user.",
 )
 @click.option(
     "--since", type=click.DateTime(formats=["%Y-%m-%d"]), default=None, help="Don't collect messages before this date (YYYY-MM-DD)."
@@ -206,10 +277,20 @@ def inspect_cmd():
 @click.option(
     "--threads/--no-threads",
     default=True,
-    help="Also open and collect each message's thread replies (slower; disable for a quick pass).",
+    help="Also open and collect each message's thread replies (slower; disable for a quick pass). Ignored with --user.",
 )
-def collect(kind, name_contains, channel_ids, full_history, since, until, threads):
+def collect(kind, name_contains, channel_ids, user, full_history, since, until, threads):
     """Scrape visible channels/DMs and store new messages in the SQLite DB."""
+    if user:
+        try:
+            count = run_collect_for_user(user)
+        except SlackTabNotFoundError as e:
+            raise click.ClickException(str(e))
+        except ValueError as e:
+            raise click.ClickException(str(e))
+        click.echo(f"Stored {count} message(s) for '{user}'.")
+        return
+
     until_inclusive = (until + timedelta(days=1, microseconds=-1)).replace(tzinfo=timezone.utc) if until else None
     since_utc = since.replace(tzinfo=timezone.utc) if since else None
 
